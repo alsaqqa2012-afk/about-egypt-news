@@ -54,7 +54,7 @@ export default defineNuxtConfig({
     apiSecret: process.env.API_SECRET,
 
     public: {
-      apiBase: process.env.API_BASE || 'https://89.167.10.171.nip.io/api/', // ✅ أضفنا /
+      apiBase: process.env.API_BASE || 'https://89.167.10.171.nip.io/api', // ✅ أضفنا /
       siteName: 'عن مصر',
       siteUrl: process.env.SITE_URL || 'http://localhost:3000',
     },
