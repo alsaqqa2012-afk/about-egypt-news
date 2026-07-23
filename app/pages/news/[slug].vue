@@ -106,7 +106,7 @@ const liked = ref(false)
 // ملاحظة: apiBase في nuxt.config.ts مسجّل بالفعل بـ /api في آخره
 // (مثال: https://89.167.10.171.nip.io/api) فلا نكرره هنا
 const config = useRuntimeConfig()
-const API_BASE = config.public.apiBase as string // ينتهي بـ /api
+const API_BASE = (config.public.apiBase as string).replace(/\/$/, '') // ينتهي بـ /api
 const SITE_URL = config.public.siteUrl as string
 // نستخدمه فقط لبناء روابط الصور (بدون /api) لأن الصور تُخدم من الجذر
 const MEDIA_BASE = API_BASE.replace(/\/api\/?$/, '')
