@@ -1,0 +1,174 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===========================
+   Local Font
+=========================== */
+
+@font-face {
+  font-family: 'Thmanyah Serif Display';
+  src: url('../fonts/thmanyahserifdisplay-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ===========================
+   Global Styles
+=========================== */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  direction: rtl;
+}
+
+body {
+  font-family: 'Thmanyah Serif Display', serif;
+  background-color: #F8FAFC;  /* ← نفس light-bg من Tailwind */
+  color: #1E293B;              /* ← نفس body من Tailwind */
+  line-height: 1.6;
+}
+
+/* ===========================
+   Typography
+=========================== */
+
+h1:not(.prose *),
+h2:not(.prose *),
+h3:not(.prose *),
+h4:not(.prose *),
+h5:not(.prose *),
+h6:not(.prose *) {
+  font-weight: 700;
+  line-height: 1.2;
+  color: #0F172A;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* ===========================
+   Utility Classes
+=========================== */
+
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ===========================
+   Animations
+=========================== */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.5s ease-in-out;
+}
+
+/* ===========================
+   Scrollbar
+=========================== */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F8FAFC;  /* ← نفس light-bg */
+}
+
+::-webkit-scrollbar-thumb {
+  background: #EA580C;  /* ← نفس primary-orange */
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #0F172A;  /* ← نفس primary-dark */
+}
+
+/* ===========================
+   Responsive Typography
+=========================== */
+
+@media (max-width: 768px) {
+  h1 {
+    font-size: 1.75rem;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+  }
+}
+
+/* ===========================
+   Print Styles
+=========================== */
+
+@media print {
+  body {
+    background: #fff;
+  }
+
+  header,
+  footer,
+  .no-print {
+    display: none;
+  }
+}
