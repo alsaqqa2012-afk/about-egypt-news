@@ -148,6 +148,19 @@ const stripHtml = (html: string): string => {
   return html.replace(/<[^>]*>/g, '').substring(0, 160) + '...'
 }
 
+// --- Strip HTML بالكامل بدون قص، تُستخدم لحساب عدد الكلمات (wordCount) ---
+const stripHtmlFull = (html: string): string => {
+  if (!html) return ''
+  return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+// --- عدد كلمات المحتوى (تقديري) لاستخدامه في wordCount بالـ JSON-LD ---
+const wordCount = computed(() => {
+  if (!post.value?.content_ar) return 0
+  const text = stripHtmlFull(post.value.content_ar)
+  return text ? text.split(' ').filter(Boolean).length : 0
+})
+
 // --- Helper: تحويل مسار نسبي إلى رابط مطلق ---
 const absoluteUrl = (path: string | null | undefined): string => {
   if (!path) return ''
@@ -277,35 +290,53 @@ useHead(() => {
       { rel: 'canonical', href: canonicalUrl.value },
     ],
     // JSON-LD Structured Data
+    // ملاحظة SEO: استخدمنا NewsArticle بدل BlogPosting لأن المحتوى إخباري
+    // (يعطي أفضلية للظهور في Google News / Top Stories)، مع إضافة
+    // wordCount و timeRequired وصورة موسّعة (width/height/caption) وصورة الكاتب،
+    // بنفس نمط المثال المرجعي.
     script: [
       {
         type: 'application/ld+json',
         innerHTML: JSON.stringify({
           '@context': 'https://schema.org',
-          '@type': 'BlogPosting',
+          '@type': 'NewsArticle',
+          '@id': `${canonicalUrl.value}#article`,
+          mainEntityOfPage: {
+            '@type': 'WebPage',
+            '@id': canonicalUrl.value,
+          },
           headline: p.title_ar,
           description: description,
-          image: image ? [image] : [],
+          inLanguage: 'ar',
+          image: {
+            '@type': 'ImageObject',
+            url: image,
+            width: 1200,
+            height: 630,
+            caption: p.featured_image_alt || p.title_ar,
+          },
+          wordCount: wordCount.value,
+          timeRequired: `PT${p.reading_time}M`,
           datePublished: publishedTime,
           dateModified: modifiedTime,
           author: {
             '@type': 'Person',
             name: p.author_info.display_name_ar,
+            ...(p.author_info.avatar
+              ? { image: absoluteUrl(p.author_info.avatar) }
+              : {}),
             ...(p.author_info.slug
               ? { url: `${SITE_URL}/author/${p.author_info.slug}` }
               : {}),
           },
           publisher: {
-            '@type': 'Organization',
+            '@type': 'NewsMediaOrganization',
+            '@id': `${SITE_URL}/#organization`,
             name: 'عن مصر',
             logo: {
               '@type': 'ImageObject',
               url: `${SITE_URL}/logo.png`,
             },
-          },
-          mainEntityOfPage: {
-            '@type': 'WebPage',
-            '@id': canonicalUrl.value,
           },
           keywords: keywords || undefined,
           ...(p.category ? { articleSection: p.category.name_ar } : {}),
