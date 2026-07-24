@@ -1,10 +1,13 @@
 <script setup lang="ts">
 // ============================================================
-// الصفحة الرئيسية مع السكاشن الديناميكية
-// API Categories: /api/blog/blog-categories/
-// API Posts: /api/blog/blog-categories/{slug}/posts/
+// الصفحة الرئيسية - محسّنة بالكامل
+// ✅ SSR عبر useAsyncData
+// ✅ SEO كامل (OG + Twitter + JSON-LD + Canonical)
+// ✅ أحدث 5 أخبار في الأعلى
+// ✅ RTL صحيح + Accessibility + CLS Fix
 // ============================================================
 
+// --- Types ---
 interface Tag {
   id: number
   name_ar: string
@@ -53,18 +56,13 @@ interface ApiResponse<T> {
 interface Section {
   category: Category
   posts: BlogPost[]
-  loading: boolean
   error: string | null
 }
 
-// --- State ---
-const categories = ref<Category[]>([])
-const sections = ref<Section[]>([])
-const loading = ref(true)
-const error = ref<string | null>(null)
-const apiAvailable = ref(true)
-
-const API_BASE = 'https://89.167.10.171.nip.io'
+// --- Config ---
+const config = useRuntimeConfig()
+const API_BASE = config.public.apiBase || 'https://89.167.10.171.nip.io'
+const SITE_URL = config.public.siteUrl || 'https://anmasr.com'
 
 // --- Fallback Data ---
 const fallbackCategories: Category[] = [
@@ -88,15 +86,13 @@ const fallbackPosts: BlogPost[] = [
     id: 447,
     title_ar: 'كيف يمكن للانسان صناعة روبوت للاطفال بسهولة',
     slug: 'كيف-يمكن-للانسان-صناعة-روبوت-للاطفال-بسهولة',
-    excerpt_ar: 'تعرف على كيفية صناعة روبون للأطفال خطوة بخطوة، مع نصائح وأفكار مبتكرة تجعل العملية ممتعة وتعليمية.',
+    excerpt_ar: 'تعرف على كيفية صناعة روبوت للأطفال خطوة بخطوة، مع نصائح وأفكار مبتكرة تجعل العملية ممتعة وتعليمية.',
     content_ar: '',
     featured_image: 'https://89.167.10.171.nip.io/media/blog/posts/HNTD-FOWAAA7Ii9.jpg',
     category: null,
     tags: [
       { id: 77, name_ar: 'خرف', slug: 'خرف' },
-      { id: 78, name_ar: 'سكين', slug: 'سكين' },
       { id: 75, name_ar: 'ملكية', slug: 'ملكية' },
-      { id: 76, name_ar: 'منشار', slug: 'منشار' },
     ],
     author_info: { display_name_ar: 'admin' },
     created_at: '2026-07-18T10:18:36.535195+03:00',
@@ -104,92 +100,12 @@ const fallbackPosts: BlogPost[] = [
   },
 ]
 
-// --- Fetch with Retry ---
-const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
-  let lastError: any
-  for (let i = 0; i <= retries; i++) {
-    try {
-      return await $fetch<T>(url, { retry: 0, timeout: 10000 })
-    } catch (err) {
-      lastError = err
-      console.warn(`Attempt ${i + 1} failed for ${url}`, err)
-      if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
-    }
-  }
-  throw lastError
+// --- Helpers ---
+const getImageUrl = (url: string | null): string | null => {
+  if (!url) return null
+  return url.startsWith('http') ? url : `${API_BASE}${url}`
 }
 
-// --- Fetch Categories ---
-const fetchCategories = async (): Promise<Category[]> => {
-  try {
-    const data = await fetchWithRetry<ApiResponse<Category>>(
-      `${API_BASE}/api/blog/blog-categories/`
-    )
-    const filtered = data.results.filter((c) => c.show_on_menu && c.posts_count > 0)
-    if (filtered.length > 0) {
-      apiAvailable.value = true
-      return filtered
-    }
-  } catch (err) {
-    console.warn('API unavailable, using fallback data')
-  }
-  apiAvailable.value = false
-  return fallbackCategories
-}
-
-// --- Fetch Posts by Category (CORRECT ENDPOINT) ---
-const fetchPostsByCategory = async (slug: string): Promise<BlogPost[]> => {
-  if (!apiAvailable.value) {
-    return fallbackPosts
-  }
-  try {
-    const data = await fetchWithRetry<ApiResponse<BlogPost>>(
-      `${API_BASE}/api/blog/blog-categories/${encodeURIComponent(slug)}/posts/`
-    )
-    return data.results.slice(0, 6)
-  } catch (err) {
-    console.warn(`Failed to fetch posts for ${slug}, using fallback`)
-    return fallbackPosts
-  }
-}
-
-// --- Fetch All Sections ---
-const fetchAllSections = async () => {
-  loading.value = true
-  error.value = null
-
-  try {
-    const cats = await fetchCategories()
-    categories.value = cats
-
-    sections.value = cats.map((cat) => ({
-      category: cat,
-      posts: [],
-      loading: true,
-      error: null,
-    }))
-
-    await Promise.all(
-      sections.value.map(async (section) => {
-        try {
-          const posts = await fetchPostsByCategory(section.category.slug)
-          section.posts = posts
-        } catch (err) {
-          section.error = 'فشل تحميل المقالات'
-        } finally {
-          section.loading = false
-        }
-      })
-    )
-  } catch (err) {
-    error.value = 'حدث خطأ أثناء تحميل الأقسام'
-    console.error('Error:', err)
-  } finally {
-    loading.value = false
-  }
-}
-
-// --- Format Date ---
 const formatDate = (dateString: string): string => {
   const date = new Date(dateString)
   return new Intl.DateTimeFormat('ar-SA', {
@@ -199,223 +115,440 @@ const formatDate = (dateString: string): string => {
   }).format(date)
 }
 
-// --- Strip HTML ---
-const stripHtml = (html: string): string => {
+const stripHtml = (html: string, maxLength = 130): string => {
   if (!html) return ''
-  return html.replace(/<[^>]*>/g, '').substring(0, 120) + '...'
+  const clean = html.replace(/<[^>]*>/g, '').trim()
+  return clean.length > maxLength ? clean.substring(0, maxLength) + '...' : clean
 }
 
-// --- Lifecycle ---
-onMounted(() => {
-  fetchAllSections()
+// --- Fetch with Retry ---
+const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
+  let lastError: any
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await $fetch<T>(url, { retry: 0, timeout: 10000 })
+    } catch (err) {
+      lastError = err
+      if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
+    }
+  }
+  throw lastError
+}
+
+// --- SSR Data Fetch ---
+const { data: pageData, error: fetchError } = await useAsyncData('home-page', async () => {
+  let apiAvailable = true
+  let categories: Category[] = []
+  let latestPosts: BlogPost[] = []
+  const sections: Section[] = []
+
+  // 1. Fetch Categories
+  try {
+    const catData = await fetchWithRetry<ApiResponse<Category>>(
+      `${API_BASE}/api/blog/blog-categories/`
+    )
+    const filtered = catData.results.filter(c => c.show_on_menu && c.posts_count > 0)
+    categories = filtered.length > 0 ? filtered : fallbackCategories
+  } catch {
+    apiAvailable = false
+    categories = fallbackCategories
+  }
+
+  // 2. Fetch Latest Posts (أحدث 5 أخبار)
+  try {
+    const latestData = await fetchWithRetry<ApiResponse<BlogPost>>(
+      `${API_BASE}/api/blog/posts/?ordering=-created_at&page_size=5`
+    )
+    latestPosts = latestData.results.slice(0, 5)
+  } catch {
+    latestPosts = fallbackPosts
+  }
+
+  // 3. Fetch Posts per Category
+  await Promise.all(
+    categories.map(async (cat) => {
+      try {
+        const postsData = apiAvailable
+          ? await fetchWithRetry<ApiResponse<BlogPost>>(
+              `${API_BASE}/api/blog/blog-categories/${encodeURIComponent(cat.slug)}/posts/`
+            )
+          : { results: fallbackPosts }
+
+        sections.push({
+          category: cat,
+          posts: postsData.results.slice(0, 6),
+          error: null,
+        })
+      } catch {
+        sections.push({ category: cat, posts: fallbackPosts, error: null })
+      }
+    })
+  )
+
+  // Sort sections by category order
+  sections.sort((a, b) => a.category.order - b.category.order)
+
+  return { categories, latestPosts, sections, apiAvailable }
 })
 
+// --- Reactive Refs from SSR Data ---
+const sections = computed(() => pageData.value?.sections ?? [])
+const latestPosts = computed(() => pageData.value?.latestPosts ?? [])
+const apiAvailable = computed(() => pageData.value?.apiAvailable ?? true)
+
 // --- SEO ---
+const siteTitle = 'عن مصر - بوابتك للأخبار والخدمات'
+const siteDesc = 'استكشف أحدث المقالات والأخبار المتنوعة عن مصر - سياسة، اقتصاد، ثقافة، ورياضة'
+const ogImage = latestPosts.value[0]?.featured_image
+  ? getImageUrl(latestPosts.value[0].featured_image)
+  : `${SITE_URL}/og-default.jpg`
+
 useHead({
-  title: 'الرئيسية - عن مصر',
+  title: siteTitle,
+  htmlAttrs: { lang: 'ar', dir: 'rtl' },
+  link: [{ rel: 'canonical', href: SITE_URL }],
   meta: [
+    { name: 'description', content: siteDesc },
+    { name: 'robots', content: 'index, follow' },
+    // Open Graph
+    { property: 'og:title', content: siteTitle },
+    { property: 'og:description', content: siteDesc },
+    { property: 'og:image', content: ogImage ?? '' },
+    { property: 'og:url', content: SITE_URL },
+    { property: 'og:type', content: 'website' },
+    { property: 'og:locale', content: 'ar_EG' },
+    // Twitter
+    { name: 'twitter:card', content: 'summary_large_image' },
+    { name: 'twitter:title', content: siteTitle },
+    { name: 'twitter:description', content: siteDesc },
+    { name: 'twitter:image', content: ogImage ?? '' },
+  ],
+  script: [
     {
-      name: 'description',
-      content: 'بوابتك للأخبار والخدمات - استكشف أحدث المقالات والموضوعات المتنوعة',
+      type: 'application/ld+json',
+      children: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'WebSite',
+        name: 'عن مصر',
+        url: SITE_URL,
+        description: siteDesc,
+        inLanguage: 'ar',
+        potentialAction: {
+          '@type': 'SearchAction',
+          target: `${SITE_URL}/search?q={search_term_string}`,
+          'query-input': 'required name=search_term_string',
+        },
+      }),
     },
   ],
 })
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50">
-    <!-- Loading State -->
-    <div v-if="loading" class="max-w-7xl mx-auto px-4 py-16">
-      <div class="animate-pulse space-y-12">
-        <div class="h-64 bg-gray-200 rounded-2xl"></div>
-        <div v-for="n in 3" :key="n" class="space-y-4">
-          <div class="h-8 bg-gray-200 rounded w-1/4"></div>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div v-for="m in 3" :key="m" class="h-80 bg-gray-200 rounded-xl"></div>
-          </div>
-        </div>
-      </div>
-    </div>
+  <div class="min-h-screen bg-gray-50" dir="rtl">
 
-    <!-- Error State (Only if NO sections at all) -->
+    <!-- ===== API Warning Banner ===== -->
     <div
-      v-else-if="error && sections.length === 0"
-      class="max-w-7xl mx-auto px-4 py-16 text-center"
+      v-if="!apiAvailable"
+      role="alert"
+      class="bg-amber-50 border-b border-amber-200"
     >
-      <div class="bg-red-50 border border-red-200 rounded-xl p-8 max-w-md mx-auto">
-        <svg class="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+      <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-center gap-2">
+        <svg class="w-4 h-4 text-amber-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
         </svg>
-        <p class="text-red-700 font-medium mb-4">{{ error }}</p>
-        <button
-          @click="fetchAllSections"
-          class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-        >
-          إعادة المحاولة
-        </button>
+        <p class="text-amber-700 text-sm font-medium">وضع العرض التجريبي — البيانات من المخزن المحلي</p>
       </div>
     </div>
 
-    <!-- Content -->
-    <template v-else>
-      <!-- API Status Warning -->
-      <div v-if="!apiAvailable" class="bg-amber-50 border-b border-amber-200">
-        <div class="max-w-7xl mx-auto px-4 py-3 text-center">
-          <p class="text-amber-700 text-sm">
-            ⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي
-          </p>
-        </div>
+    <!-- ===== Hero Section ===== -->
+    <section class="bg-white border-b border-gray-200">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 text-center">
+        <h1 class="text-4xl md:text-5xl font-bold text-gray-900 mb-3 tracking-tight">
+          عن مصر
+        </h1>
+        <p class="text-lg text-gray-500 max-w-2xl mx-auto leading-relaxed">
+          بوابتك للأخبار والخدمات — استكشف أحدث المقالات والموضوعات المتنوعة
+        </p>
       </div>
+    </section>
 
-      <!-- Hero -->
-      <section class="bg-white border-b border-gray-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div class="text-center">
-            <h1 class="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-              عن مصر
-            </h1>
-            <p class="text-lg text-gray-600 max-w-2xl mx-auto">
-              بوابتك للأخبار والخدمات - استكشف أحدث المقالات والموضوعات المتنوعة
-            </p>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-16">
+
+      <!-- ===== أحدث الأخبار ===== -->
+      <section v-if="latestPosts.length > 0" aria-labelledby="latest-heading">
+        <!-- Section Header -->
+        <div class="flex items-center justify-between mb-7">
+          <div class="flex items-center gap-3">
+            <div class="w-1 h-8 rounded bg-red-500" />
+            <h2 id="latest-heading" class="text-2xl md:text-3xl font-bold text-gray-900">
+              🔴 أحدث الأخبار
+            </h2>
           </div>
+          <NuxtLink
+            to="/news"
+            class="text-sm font-medium text-orange-600 hover:text-orange-700 transition-colors flex items-center gap-1"
+            aria-label="عرض كل الأخبار"
+          >
+            عرض الكل
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </NuxtLink>
         </div>
-      </section>
 
-      <!-- Dynamic Sections -->
-      <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-12">
-        <div v-for="section in sections" :key="section.category.id">
-          <!-- Section Header -->
-          <div class="flex items-center justify-between mb-6">
-            <div class="flex items-center gap-2">
-              <div
-                class="w-1 h-8 rounded"
-                :style="{ backgroundColor: section.category.color || '#f97316' }"
+        <!-- Latest Posts Layout: بطاقة كبيرة + 4 صغيرة -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+          <!-- البطاقة الرئيسية (أول خبر) -->
+          <NuxtLink
+            :to="`/news/${latestPosts[0].slug}`"
+            class="lg:col-span-2 group relative rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-shadow duration-300 cursor-pointer block"
+            :aria-label="latestPosts[0].title_ar"
+          >
+            <div class="relative h-72 md:h-96 bg-gray-200">
+              <img
+                v-if="getImageUrl(latestPosts[0].featured_image)"
+                :src="getImageUrl(latestPosts[0].featured_image)!"
+                :alt="latestPosts[0].title_ar"
+                width="800"
+                height="450"
+                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                loading="eager"
+                fetchpriority="high"
               />
-              <h2 class="text-2xl md:text-3xl font-bold text-gray-900">
-                {{ section.category.name_ar }}
-              </h2>
-              <span class="text-sm text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                {{ section.category.posts_count }}
-              </span>
+              <div v-else class="w-full h-full bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center">
+                <svg class="w-20 h-20 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <!-- Gradient Overlay -->
+              <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+              <!-- Content Overlay -->
+              <div class="absolute bottom-0 right-0 left-0 p-6">
+                <div v-if="latestPosts[0].category" class="mb-2">
+                  <span
+                    class="text-xs font-bold px-3 py-1 rounded-full text-white"
+                    :style="{ backgroundColor: latestPosts[0].category.color || '#f97316' }"
+                  >
+                    {{ latestPosts[0].category.name_ar }}
+                  </span>
+                </div>
+                <h3 class="text-white text-xl md:text-2xl font-bold leading-snug mb-2 group-hover:text-orange-300 transition-colors">
+                  {{ latestPosts[0].title_ar }}
+                </h3>
+                <div class="flex items-center gap-3 text-white/70 text-xs">
+                  <span>{{ latestPosts[0].author_info.display_name_ar }}</span>
+                  <span>•</span>
+                  <span>{{ formatDate(latestPosts[0].created_at) }}</span>
+                  <span>•</span>
+                  <span class="flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                    {{ latestPosts[0].views_count }}
+                  </span>
+                </div>
+              </div>
             </div>
+          </NuxtLink>
+
+          <!-- 4 أخبار جانبية -->
+          <div class="flex flex-col gap-4">
             <NuxtLink
-              :to="`/category/${section.category.slug}`"
-              class="text-orange-600 font-medium hover:text-orange-700 transition-colors flex items-center gap-1"
-            >
-              عرض الكل
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-              </svg>
-            </NuxtLink>
-          </div>
-
-          <!-- Section Loading -->
-          <div v-if="section.loading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div v-for="n in 3" :key="n" class="h-80 bg-gray-200 rounded-xl animate-pulse"></div>
-          </div>
-
-          <!-- Section Error -->
-          <div v-else-if="section.error" class="text-center py-8 text-gray-500">
-            {{ section.error }}
-          </div>
-
-          <!-- Posts Grid -->
-          <div v-else-if="section.posts.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <article
-              v-for="post in section.posts"
+              v-for="post in latestPosts.slice(1, 5)"
               :key="post.id"
-              class="group bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg transition-all duration-300 hover:-translate-y-1"
+              :to="`/news/${post.slug}`"
+              class="group flex gap-3 bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md transition-all duration-300 cursor-pointer"
+              :aria-label="post.title_ar"
             >
-              <!-- Image -->
-              <div class="relative h-48 overflow-hidden bg-gray-100">
+              <!-- Thumbnail -->
+              <div class="relative w-24 h-24 shrink-0 bg-gray-100">
                 <img
-                  v-if="post.featured_image"
-                  :src="post.featured_image.startsWith('http') ? post.featured_image : API_BASE + post.featured_image"
+                  v-if="getImageUrl(post.featured_image)"
+                  :src="getImageUrl(post.featured_image)!"
                   :alt="post.title_ar"
-                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                  width="96"
+                  height="96"
+                  class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   loading="lazy"
                 />
-                <div
-                  v-else
-                  class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"
-                >
-                  <svg class="w-16 h-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div v-else class="w-full h-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
+                  <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                   </svg>
                 </div>
               </div>
-
-              <!-- Content -->
-              <div class="p-5">
-                <!-- Tags -->
-                <div v-if="post.tags.length > 0" class="flex flex-wrap gap-1 mb-3">
-                  <span
-                    v-for="tag in post.tags.slice(0, 3)"
-                    :key="tag.id"
-                    class="px-2 py-0.5 text-xs bg-orange-50 text-orange-600 rounded-md border border-orange-100"
-                  >
-                    {{ tag.name_ar }}
-                  </span>
-                </div>
-
-                <!-- Title -->
-                <h3 class="text-lg font-bold text-gray-900 mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors leading-relaxed">
-                  <NuxtLink :to="`/news/${post.slug}`">
-                    {{ post.title_ar }}
-                  </NuxtLink>
+              <!-- Text -->
+              <div class="flex flex-col justify-center py-3 pl-3 gap-1">
+                <span
+                  v-if="post.category"
+                  class="text-xs font-semibold"
+                  :style="{ color: post.category.color || '#f97316' }"
+                >
+                  {{ post.category.name_ar }}
+                </span>
+                <h3 class="text-sm font-bold text-gray-800 line-clamp-2 leading-snug group-hover:text-orange-600 transition-colors">
+                  {{ post.title_ar }}
                 </h3>
-
-                <!-- Excerpt -->
-                <p class="text-sm text-gray-600 mb-4 line-clamp-2 leading-relaxed">
-                  {{ stripHtml(post.excerpt_ar) }}
-                </p>
-
-                <!-- Meta -->
-                <div class="flex items-center justify-between pt-3 border-t border-gray-100">
-                  <div class="flex items-center gap-2 text-xs text-gray-500">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-                    </svg>
-                    <span>{{ post.author_info.display_name_ar }}</span>
-                  </div>
-                  <div class="flex items-center gap-3 text-xs text-gray-500">
-                    <span class="flex items-center gap-1">
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                      </svg>
-                      {{ post.views_count }}
-                    </span>
-                    <span class="flex items-center gap-1">
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                      </svg>
-                      {{ formatDate(post.created_at) }}
-                    </span>
-                  </div>
-                </div>
+                <span class="text-xs text-gray-400 mt-auto">{{ formatDate(post.created_at) }}</span>
               </div>
-            </article>
+            </NuxtLink>
           </div>
-
-          <!-- Empty Section -->
-          <div v-else class="text-center py-12 bg-white rounded-xl border border-gray-100">
-            <svg class="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-            </svg>
-            <p class="text-gray-500">لا توجد مقالات في هذا القسم</p>
-          </div>
-        </div>
-
-        <!-- No Sections -->
-        <div v-if="sections.length === 0" class="text-center py-20">
-          <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-          </svg>
-          <p class="text-gray-500 text-lg">لا توجد أقسام متاحة حالياً</p>
         </div>
       </section>
-    </template>
+
+      <!-- ===== Divider ===== -->
+      <hr class="border-gray-200" />
+
+      <!-- ===== Dynamic Category Sections ===== -->
+      <section
+        v-for="section in sections.filter(s => s.posts.length > 0)"
+        :key="section.category.id"
+        :aria-labelledby="`cat-heading-${section.category.id}`"
+      >
+        <!-- Section Header -->
+        <div class="flex items-center justify-between mb-7">
+          <div class="flex items-center gap-3">
+            <div
+              class="w-1 h-8 rounded"
+              :style="{ backgroundColor: section.category.color || '#f97316' }"
+              aria-hidden="true"
+            />
+            <h2
+              :id="`cat-heading-${section.category.id}`"
+              class="text-2xl md:text-3xl font-bold text-gray-900"
+            >
+              {{ section.category.name_ar }}
+            </h2>
+            <span
+              class="text-xs text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full font-medium"
+              :aria-label="`${section.category.posts_count} مقال`"
+            >
+              {{ section.category.posts_count }}
+            </span>
+          </div>
+          <NuxtLink
+            :to="`/category/${section.category.slug}`"
+            class="text-sm font-medium text-orange-600 hover:text-orange-700 transition-colors flex items-center gap-1"
+            :aria-label="`عرض كل مقالات ${section.category.name_ar}`"
+          >
+            عرض الكل
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </NuxtLink>
+        </div>
+
+        <!-- Posts Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <article
+            v-for="post in section.posts"
+            :key="post.id"
+            class="group bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg transition-all duration-300 hover:-translate-y-1 cursor-pointer"
+          >
+            <!-- Image -->
+            <div class="relative h-48 overflow-hidden bg-gray-100">
+              <img
+                v-if="getImageUrl(post.featured_image)"
+                :src="getImageUrl(post.featured_image)!"
+                :alt="post.title_ar"
+                width="400"
+                height="192"
+                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                loading="lazy"
+              />
+              <div
+                v-else
+                class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"
+                aria-hidden="true"
+              >
+                <svg class="w-14 h-14 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <!-- Category Badge -->
+              <div v-if="post.category" class="absolute top-3 right-3">
+                <span
+                  class="text-xs font-bold px-2.5 py-1 rounded-full text-white shadow-sm"
+                  :style="{ backgroundColor: post.category.color || '#f97316' }"
+                >
+                  {{ post.category.name_ar }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Content -->
+            <div class="p-5">
+              <!-- Tags -->
+              <div v-if="post.tags.length > 0" class="flex flex-wrap gap-1.5 mb-3">
+                <span
+                  v-for="tag in post.tags.slice(0, 3)"
+                  :key="tag.id"
+                  class="px-2 py-0.5 text-xs bg-orange-50 text-orange-600 rounded-md border border-orange-100 font-medium"
+                >
+                  #{{ tag.name_ar }}
+                </span>
+              </div>
+
+              <!-- Title -->
+              <h3 class="text-base font-bold text-gray-900 mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors leading-relaxed">
+                <NuxtLink
+                  :to="`/news/${post.slug}`"
+                  class="focus:outline-none focus:ring-2 focus:ring-orange-400 rounded"
+                  :aria-label="post.title_ar"
+                >
+                  {{ post.title_ar }}
+                </NuxtLink>
+              </h3>
+
+              <!-- Excerpt -->
+              <p class="text-sm text-gray-500 mb-4 line-clamp-2 leading-relaxed">
+                {{ stripHtml(post.excerpt_ar) }}
+              </p>
+
+              <!-- Meta Footer -->
+              <div class="flex items-center justify-between pt-3 border-t border-gray-100 text-xs text-gray-400">
+                <div class="flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                  </svg>
+                  <span>{{ post.author_info.display_name_ar }}</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="flex items-center gap-1" :aria-label="`${post.views_count} مشاهدة`">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                    </svg>
+                    {{ post.views_count.toLocaleString('ar-SA') }}
+                  </span>
+                  <span class="flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                    </svg>
+                    {{ formatDate(post.created_at) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ===== No Sections Fallback ===== -->
+      <div
+        v-if="sections.length === 0"
+        class="text-center py-24"
+        role="status"
+        aria-live="polite"
+      >
+        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+        </svg>
+        <p class="text-gray-400 text-lg">لا توجد أقسام متاحة حالياً</p>
+      </div>
+
+    </div>
   </div>
 </template>
 
