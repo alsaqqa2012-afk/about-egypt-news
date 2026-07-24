@@ -5,6 +5,7 @@
 // ✅ SEO كامل (OG + Twitter + JSON-LD + Canonical)
 // ✅ أحدث 5 أخبار في الأعلى
 // ✅ RTL صحيح + Accessibility + CLS Fix
+// ✅ متوافق مع blog-posts/latest/ endpoint
 // ============================================================
 
 // --- Types ---
@@ -28,22 +29,24 @@ interface Category {
   posts_count: number
 }
 
-interface AuthorInfo {
-  display_name_ar: string
-}
-
 interface BlogPost {
   id: number
   title_ar: string
   slug: string
   excerpt_ar: string
-  content_ar: string
+  content_ar?: string
   featured_image: string | null
-  category: Category | null
-  tags: Tag[]
-  author_info: AuthorInfo
-  created_at: string
+  category?: Category | null
+  tags?: Tag[]
+  // latest endpoint
+  author_name?: string
+  // category posts endpoint
+  author_info?: { display_name_ar: string }
+  // dates
+  published_at?: string | null
+  created_at?: string
   views_count: number
+  reading_time?: number
 }
 
 interface ApiResponse<T> {
@@ -62,7 +65,7 @@ interface Section {
 // --- Config ---
 const config = useRuntimeConfig()
 const API_BASE = config.public.apiBase || 'https://89.167.10.171.nip.io'
-const SITE_URL = config.public.siteUrl || 'https://anmasr.com'
+const SITE_URL = config.public.siteUrl || 'https://about-egypt-news.vercel.app'
 
 // --- Fallback Data ---
 const fallbackCategories: Category[] = [
@@ -83,25 +86,19 @@ const fallbackCategories: Category[] = [
 
 const fallbackPosts: BlogPost[] = [
   {
-    id: 447,
-    title_ar: 'كيف يمكن للانسان صناعة روبوت للاطفال بسهولة',
-    slug: 'كيف-يمكن-للانسان-صناعة-روبوت-للاطفال-بسهولة',
-    excerpt_ar: 'تعرف على كيفية صناعة روبوت للأطفال خطوة بخطوة، مع نصائح وأفكار مبتكرة تجعل العملية ممتعة وتعليمية.',
-    content_ar: '',
-    featured_image: 'https://89.167.10.171.nip.io/media/blog/posts/HNTD-FOWAAA7Ii9.jpg',
-    category: null,
-    tags: [
-      { id: 77, name_ar: 'خرف', slug: 'خرف' },
-      { id: 75, name_ar: 'ملكية', slug: 'ملكية' },
-    ],
-    author_info: { display_name_ar: 'admin' },
-    created_at: '2026-07-18T10:18:36.535195+03:00',
-    views_count: 0,
+    id: 446,
+    title_ar: 'قصة قصيرة هادفة للاطفال عن الامانة',
+    slug: 'a-purposeful-short-story-for-kids-about-honesty',
+    excerpt_ar: 'قصة قصيرة هادفة للأطفال تعزز من قيمة الأمانة وأهمية الصدق في حياتهم اليومية.',
+    featured_image: 'https://89.167.10.171.nip.io/media/blog/posts/download.jpg',
+    author_name: 'عبدالله علاء السقا',
+    published_at: '2026-07-18T10:18:36.535195+03:00',
+    views_count: 4,
   },
 ]
 
 // --- Helpers ---
-const getImageUrl = (url: string | null): string | null => {
+const getImageUrl = (url: string | null | undefined): string | null => {
   if (!url) return null
   return url.startsWith('http') ? url : `${API_BASE}${url}`
 }
@@ -115,6 +112,16 @@ const formatDate = (dateString: string): string => {
   }).format(date)
 }
 
+const getPostDate = (post: BlogPost): string => {
+  const date = post.published_at || post.created_at
+  if (!date) return ''
+  return formatDate(date)
+}
+
+const getAuthorName = (post: BlogPost): string => {
+  return post.author_name || post.author_info?.display_name_ar || 'غير معروف'
+}
+
 const stripHtml = (html: string, maxLength = 130): string => {
   if (!html) return ''
   const clean = html.replace(/<[^>]*>/g, '').trim()
@@ -126,7 +133,11 @@ const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
   let lastError: any
   for (let i = 0; i <= retries; i++) {
     try {
-      return await $fetch<T>(url, { retry: 0, timeout: 10000 })
+      return await $fetch<T>(url, {
+        retry: 0,
+        timeout: 10000,
+        headers: { Accept: 'application/json' },
+      })
     } catch (err) {
       lastError = err
       if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
@@ -136,7 +147,7 @@ const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
 }
 
 // --- SSR Data Fetch ---
-const { data: pageData, error: fetchError } = await useAsyncData('home-page', async () => {
+const { data: pageData } = await useAsyncData('home-page', async () => {
   let apiAvailable = true
   let categories: Category[] = []
   let latestPosts: BlogPost[] = []
@@ -149,17 +160,22 @@ const { data: pageData, error: fetchError } = await useAsyncData('home-page', as
     )
     const filtered = catData.results.filter(c => c.show_on_menu && c.posts_count > 0)
     categories = filtered.length > 0 ? filtered : fallbackCategories
+    apiAvailable = true
   } catch {
     apiAvailable = false
     categories = fallbackCategories
   }
 
-  // 2. Fetch Latest Posts (أحدث 5 أخبار)
+  // 2. Fetch Latest Posts
   try {
-    const latestData = await fetchWithRetry<ApiResponse<BlogPost>>(
-      `${API_BASE}/api/blog/posts/?ordering=-created_at&page_size=5`
+    const latestData = await fetchWithRetry<BlogPost[] | ApiResponse<BlogPost>>(
+      `${API_BASE}/api/blog/blog-posts/latest/`
     )
-    latestPosts = latestData.results.slice(0, 5)
+    // يدعم array مباشر أو ApiResponse
+    const posts = Array.isArray(latestData)
+      ? latestData
+      : (latestData as ApiResponse<BlogPost>).results ?? []
+    latestPosts = posts.slice(0, 5)
   } catch {
     latestPosts = fallbackPosts
   }
@@ -172,7 +188,7 @@ const { data: pageData, error: fetchError } = await useAsyncData('home-page', as
           ? await fetchWithRetry<ApiResponse<BlogPost>>(
               `${API_BASE}/api/blog/blog-categories/${encodeURIComponent(cat.slug)}/posts/`
             )
-          : { results: fallbackPosts }
+          : { results: fallbackPosts, count: 0, next: null, previous: null }
 
         sections.push({
           category: cat,
@@ -180,18 +196,22 @@ const { data: pageData, error: fetchError } = await useAsyncData('home-page', as
           error: null,
         })
       } catch {
-        sections.push({ category: cat, posts: fallbackPosts, error: null })
+        sections.push({
+          category: cat,
+          posts: fallbackPosts,
+          error: null,
+        })
       }
     })
   )
 
-  // Sort sections by category order
+  // ترتيب الأقسام
   sections.sort((a, b) => a.category.order - b.category.order)
 
   return { categories, latestPosts, sections, apiAvailable }
 })
 
-// --- Reactive Refs from SSR Data ---
+// --- Computed ---
 const sections = computed(() => pageData.value?.sections ?? [])
 const latestPosts = computed(() => pageData.value?.latestPosts ?? [])
 const apiAvailable = computed(() => pageData.value?.apiAvailable ?? true)
@@ -210,14 +230,12 @@ useHead({
   meta: [
     { name: 'description', content: siteDesc },
     { name: 'robots', content: 'index, follow' },
-    // Open Graph
     { property: 'og:title', content: siteTitle },
     { property: 'og:description', content: siteDesc },
     { property: 'og:image', content: ogImage ?? '' },
     { property: 'og:url', content: SITE_URL },
     { property: 'og:type', content: 'website' },
     { property: 'og:locale', content: 'ar_EG' },
-    // Twitter
     { name: 'twitter:card', content: 'summary_large_image' },
     { name: 'twitter:title', content: siteTitle },
     { name: 'twitter:description', content: siteDesc },
@@ -254,10 +272,12 @@ useHead({
       class="bg-amber-50 border-b border-amber-200"
     >
       <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-center gap-2">
-        <svg class="w-4 h-4 text-amber-600 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <svg class="w-4 h-4 text-amber-600 shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
           <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
         </svg>
-        <p class="text-amber-700 text-sm font-medium">وضع العرض التجريبي — البيانات من المخزن المحلي</p>
+        <p class="text-amber-700 text-sm font-medium">
+          وضع العرض التجريبي — البيانات من المخزن المحلي
+        </p>
       </div>
     </div>
 
@@ -277,10 +297,11 @@ useHead({
 
       <!-- ===== أحدث الأخبار ===== -->
       <section v-if="latestPosts.length > 0" aria-labelledby="latest-heading">
-        <!-- Section Header -->
+
+        <!-- Header -->
         <div class="flex items-center justify-between mb-7">
           <div class="flex items-center gap-3">
-            <div class="w-1 h-8 rounded bg-red-500" />
+            <div class="w-1 h-8 rounded bg-red-500" aria-hidden="true" />
             <h2 id="latest-heading" class="text-2xl md:text-3xl font-bold text-gray-900">
               🔴 أحدث الأخبار
             </h2>
@@ -297,36 +318,42 @@ useHead({
           </NuxtLink>
         </div>
 
-        <!-- Latest Posts Layout: بطاقة كبيرة + 4 صغيرة -->
+        <!-- Layout: بطاقة كبيرة + 4 جانبية -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-          <!-- البطاقة الرئيسية (أول خبر) -->
+          <!-- البطاقة الرئيسية -->
           <NuxtLink
             :to="`/news/${latestPosts[0].slug}`"
             class="lg:col-span-2 group relative rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-shadow duration-300 cursor-pointer block"
             :aria-label="latestPosts[0].title_ar"
           >
-            <div class="relative h-72 md:h-96 bg-gray-200">
+            <div class="relative h-72 md:h-[420px] bg-gray-200">
               <img
                 v-if="getImageUrl(latestPosts[0].featured_image)"
                 :src="getImageUrl(latestPosts[0].featured_image)!"
                 :alt="latestPosts[0].title_ar"
                 width="800"
-                height="450"
+                height="420"
                 class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 loading="eager"
                 fetchpriority="high"
               />
-              <div v-else class="w-full h-full bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center">
-                <svg class="w-20 h-20 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <div
+                v-else
+                class="w-full h-full bg-gradient-to-br from-orange-100 to-orange-200 flex items-center justify-center"
+                aria-hidden="true"
+              >
+                <svg class="w-20 h-20 text-orange-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                 </svg>
               </div>
+
               <!-- Gradient Overlay -->
-              <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+              <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" aria-hidden="true" />
+
               <!-- Content Overlay -->
               <div class="absolute bottom-0 right-0 left-0 p-6">
-                <div v-if="latestPosts[0].category" class="mb-2">
+                <div v-if="latestPosts[0].category" class="mb-3">
                   <span
                     class="text-xs font-bold px-3 py-1 rounded-full text-white"
                     :style="{ backgroundColor: latestPosts[0].category.color || '#f97316' }"
@@ -334,19 +361,33 @@ useHead({
                     {{ latestPosts[0].category.name_ar }}
                   </span>
                 </div>
-                <h3 class="text-white text-xl md:text-2xl font-bold leading-snug mb-2 group-hover:text-orange-300 transition-colors">
+                <h3 class="text-white text-xl md:text-2xl font-bold leading-snug mb-3 group-hover:text-orange-300 transition-colors">
                   {{ latestPosts[0].title_ar }}
                 </h3>
-                <div class="flex items-center gap-3 text-white/70 text-xs">
-                  <span>{{ latestPosts[0].author_info.display_name_ar }}</span>
-                  <span>•</span>
-                  <span>{{ formatDate(latestPosts[0].created_at) }}</span>
-                  <span>•</span>
+                <div class="flex flex-wrap items-center gap-3 text-white/70 text-xs">
                   <span class="flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
+                    {{ getAuthorName(latestPosts[0]) }}
+                  </span>
+                  <span v-if="getPostDate(latestPosts[0])" class="flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                    </svg>
+                    {{ getPostDate(latestPosts[0]) }}
+                  </span>
+                  <span class="flex items-center gap-1" :aria-label="`${latestPosts[0].views_count} مشاهدة`">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0zM2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                     </svg>
-                    {{ latestPosts[0].views_count }}
+                    {{ latestPosts[0].views_count.toLocaleString('ar-SA') }}
+                  </span>
+                  <span v-if="latestPosts[0].reading_time" class="flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    {{ latestPosts[0].reading_time }} دقيقة قراءة
                   </span>
                 </div>
               </div>
@@ -354,7 +395,7 @@ useHead({
           </NuxtLink>
 
           <!-- 4 أخبار جانبية -->
-          <div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-3">
             <NuxtLink
               v-for="post in latestPosts.slice(1, 5)"
               :key="post.id"
@@ -373,17 +414,22 @@ useHead({
                   class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   loading="lazy"
                 />
-                <div v-else class="w-full h-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-                  <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <div
+                  v-else
+                  class="w-full h-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center"
+                  aria-hidden="true"
+                >
+                  <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                   </svg>
                 </div>
               </div>
+
               <!-- Text -->
-              <div class="flex flex-col justify-center py-3 pl-3 gap-1">
+              <div class="flex flex-col justify-center py-3 pl-3 gap-1.5 flex-1 min-w-0">
                 <span
                   v-if="post.category"
-                  class="text-xs font-semibold"
+                  class="text-xs font-semibold truncate"
                   :style="{ color: post.category.color || '#f97316' }"
                 >
                   {{ post.category.name_ar }}
@@ -391,7 +437,12 @@ useHead({
                 <h3 class="text-sm font-bold text-gray-800 line-clamp-2 leading-snug group-hover:text-orange-600 transition-colors">
                   {{ post.title_ar }}
                 </h3>
-                <span class="text-xs text-gray-400 mt-auto">{{ formatDate(post.created_at) }}</span>
+                <div class="flex items-center gap-2 text-xs text-gray-400 mt-auto">
+                  <span v-if="getPostDate(post)">{{ getPostDate(post) }}</span>
+                  <span v-if="post.reading_time" class="flex items-center gap-1">
+                    · {{ post.reading_time }} د
+                  </span>
+                </div>
               </div>
             </NuxtLink>
           </div>
@@ -399,7 +450,7 @@ useHead({
       </section>
 
       <!-- ===== Divider ===== -->
-      <hr class="border-gray-200" />
+      <hr v-if="sections.filter(s => s.posts.length > 0).length > 0" class="border-gray-200" />
 
       <!-- ===== Dynamic Category Sections ===== -->
       <section
@@ -467,6 +518,7 @@ useHead({
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                 </svg>
               </div>
+
               <!-- Category Badge -->
               <div v-if="post.category" class="absolute top-3 right-3">
                 <span
@@ -481,7 +533,7 @@ useHead({
             <!-- Content -->
             <div class="p-5">
               <!-- Tags -->
-              <div v-if="post.tags.length > 0" class="flex flex-wrap gap-1.5 mb-3">
+              <div v-if="post.tags && post.tags.length > 0" class="flex flex-wrap gap-1.5 mb-3">
                 <span
                   v-for="tag in post.tags.slice(0, 3)"
                   :key="tag.id"
@@ -504,7 +556,7 @@ useHead({
 
               <!-- Excerpt -->
               <p class="text-sm text-gray-500 mb-4 line-clamp-2 leading-relaxed">
-                {{ stripHtml(post.excerpt_ar) }}
+                {{ stripHtml(post.excerpt_ar ?? '') }}
               </p>
 
               <!-- Meta Footer -->
@@ -513,7 +565,7 @@ useHead({
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
                   </svg>
-                  <span>{{ post.author_info.display_name_ar }}</span>
+                  <span>{{ getAuthorName(post) }}</span>
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="flex items-center gap-1" :aria-label="`${post.views_count} مشاهدة`">
@@ -522,11 +574,11 @@ useHead({
                     </svg>
                     {{ post.views_count.toLocaleString('ar-SA') }}
                   </span>
-                  <span class="flex items-center gap-1">
+                  <span v-if="getPostDate(post)" class="flex items-center gap-1">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                     </svg>
-                    {{ formatDate(post.created_at) }}
+                    {{ getPostDate(post) }}
                   </span>
                 </div>
               </div>
@@ -537,7 +589,7 @@ useHead({
 
       <!-- ===== No Sections Fallback ===== -->
       <div
-        v-if="sections.length === 0"
+        v-if="sections.length === 0 && latestPosts.length === 0"
         class="text-center py-24"
         role="status"
         aria-live="polite"
@@ -545,7 +597,7 @@ useHead({
         <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
         </svg>
-        <p class="text-gray-400 text-lg">لا توجد أقسام متاحة حالياً</p>
+        <p class="text-gray-400 text-lg">لا توجد أخبار متاحة حالياً</p>
       </div>
 
     </div>
