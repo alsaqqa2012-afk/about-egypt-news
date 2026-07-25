@@ -1,7 +1,10 @@
 <script setup lang="ts">
 // ============================================================
 // صفحة قائمة المقالات - Blog Posts List
-// جلب البيانات من الـ Client فقط لتجنب مشاكل SSR مع الـ API
+// ✅ SSR عبر useAsyncData (بدل الجلب من الـ Client فقط)
+// ✅ SEO كامل (OG + Twitter + JSON-LD ItemList + Canonical)
+// ✅ Pagination عبر query param ?page=
+// ✅ نفس نمط الصفحة الرئيسية بالضبط (API_BASE من runtimeConfig)
 // ============================================================
 
 interface Tag {
@@ -45,39 +48,24 @@ interface ApiResponse {
   results: BlogPost[]
 }
 
-// --- State ---
-const posts = ref<BlogPost[]>([])
-const loading = ref(true)
-const error = ref<string | null>(null)
-const totalCount = ref(0)
+// --- Config (نفس نمط الصفحة الرئيسية بالضبط) ---
+const config = useRuntimeConfig()
+const API_BASE = config.public.apiBase || 'https://89.167.10.171.nip.io/api'
+const SITE_URL = config.public.siteUrl || 'https://about-egypt-news.vercel.app'
 
-const API_BASE = 'https://89.167.10.171.nip.io'
+// --- Route / Pagination ---
+const route = useRoute()
+const currentPage = computed(() => {
+  const p = Number(route.query.page)
+  return Number.isFinite(p) && p > 0 ? p : 1
+})
 
-// --- Fetch Data (Client Only) ---
-const fetchPosts = async () => {
-  loading.value = true
-  error.value = null
-
-  try {
-    const data = await $fetch<ApiResponse>(`${API_BASE}/api/blog/blog-posts/`, {
-      retry: 1,
-    })
-
-    if (data && data.results) {
-      posts.value = data.results
-      totalCount.value = data.count
-    } else {
-      error.value = 'لم يتم العثور على بيانات'
-    }
-  } catch (err: any) {
-    console.error('Fetch error:', err)
-    error.value = 'حدث خطأ أثناء جلب البيانات. حاول مرة أخرى.'
-  } finally {
-    loading.value = false
-  }
+// --- Helpers ---
+const getImageUrl = (url: string | null | undefined): string | null => {
+  if (!url) return null
+  return url.startsWith('http') ? url : `${API_BASE.replace(/\/api\/?$/, '')}${url}`
 }
 
-// --- Format Date ---
 const formatDate = (dateString: string): string => {
   const date = new Date(dateString)
   return new Intl.DateTimeFormat('ar-SA', {
@@ -87,30 +75,165 @@ const formatDate = (dateString: string): string => {
   }).format(date)
 }
 
-// --- Strip HTML from excerpt ---
 const stripHtml = (html: string): string => {
   if (!html) return ''
-  return html.replace(/<[^>]*>/g, '').substring(0, 150) + '...'
+  const clean = html.replace(/<[^>]*>/g, '').trim()
+  return clean.length > 150 ? clean.substring(0, 150) + '...' : clean
 }
 
-// --- Lifecycle: Fetch on Client ---
-onMounted(() => {
-  fetchPosts()
+// --- Fetch with Retry ---
+const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
+  let lastError: any
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await $fetch<T>(url, {
+        retry: 0,
+        timeout: 10000,
+        headers: { Accept: 'application/json' },
+      })
+    } catch (err) {
+      lastError = err
+      if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
+    }
+  }
+  throw lastError
+}
+
+// --- Fallback Data ---
+const fallbackPosts: BlogPost[] = [
+  {
+    id: 446,
+    title_ar: 'قصة قصيرة هادفة للاطفال عن الامانة',
+    slug: 'a-purposeful-short-story-for-kids-about-honesty',
+    excerpt_ar: 'قصة قصيرة هادفة للأطفال تعزز من قيمة الأمانة وأهمية الصدق في حياتهم اليومية.',
+    content_ar: '',
+    featured_image: 'https://89.167.10.171.nip.io/media/blog/posts/download.jpg',
+    category: null,
+    tags: [],
+    author_info: { display_name_ar: 'عبدالله علاء السقا' },
+    created_at: '2026-07-18T10:18:36.535195+03:00',
+    views_count: 4,
+    show_whatsapp_button: false,
+    show_telegram_button: false,
+  },
+]
+
+// --- SSR Data Fetch (نفس نمط الصفحة الرئيسية) ---
+const { data: pageData } = await useAsyncData(
+  `blog-posts-page-${currentPage.value}`,
+  async () => {
+    try {
+      const data = await fetchWithRetry<ApiResponse>(
+        `${API_BASE}/blog/blog-posts/?page=${currentPage.value}`
+      )
+      return {
+        posts: data.results,
+        totalCount: data.count,
+        hasNext: !!data.next,
+        hasPrevious: !!data.previous,
+        apiAvailable: true,
+      }
+    } catch {
+      return {
+        posts: fallbackPosts,
+        totalCount: fallbackPosts.length,
+        hasNext: false,
+        hasPrevious: false,
+        apiAvailable: false,
+      }
+    }
+  },
+  { watch: [currentPage] }
+)
+
+// --- Computed ---
+const posts = computed(() => pageData.value?.posts ?? [])
+const totalCount = computed(() => pageData.value?.totalCount ?? 0)
+const hasNext = computed(() => pageData.value?.hasNext ?? false)
+const hasPrevious = computed(() => pageData.value?.hasPrevious ?? false)
+const apiAvailable = computed(() => pageData.value?.apiAvailable ?? true)
+
+// --- Canonical URL (يراعي رقم الصفحة) ---
+const canonicalUrl = computed(() => {
+  return currentPage.value > 1
+    ? `${SITE_URL}/blog?page=${currentPage.value}`
+    : `${SITE_URL}/blog`
 })
 
-// --- SEO (static since we don't have data at SSR time) ---
-useHead({
-  title:  'آخر الأخبار | عن مصر',
-  meta: [
-    {
-      name: 'description',
-      content: 'اطلع على أحدث الأخبار العاجلة، والتقارير السياسية والاقتصادية والرياضية والتكنولوجية من موقع عن مصر.'    },
+// --- SEO ---
+const pageTitle = computed(() =>
+  currentPage.value > 1
+    ? `آخر الأخبار - صفحة ${currentPage.value} | عن مصر`
+    : 'آخر الأخبار | عن مصر'
+)
+const pageDesc =
+  'اطلع على أحدث الأخبار العاجلة، والتقارير السياسية والاقتصادية والرياضية والتكنولوجية من موقع عن مصر.'
+
+useHead(() => ({
+  title: pageTitle.value,
+  htmlAttrs: { lang: 'ar', dir: 'rtl' },
+  link: [
+    { rel: 'canonical', href: canonicalUrl.value },
+    ...(hasPrevious.value
+      ? [{
+          rel: 'prev',
+          href: currentPage.value === 2
+            ? `${SITE_URL}/blog`
+            : `${SITE_URL}/blog?page=${currentPage.value - 1}`,
+        }]
+      : []),
+    ...(hasNext.value
+      ? [{ rel: 'next', href: `${SITE_URL}/blog?page=${currentPage.value + 1}` }]
+      : []),
   ],
-})
+  meta: [
+    { name: 'description', content: pageDesc },
+    { name: 'robots', content: 'index, follow' },
+    { property: 'og:type', content: 'website' },
+    { property: 'og:title', content: pageTitle.value },
+    { property: 'og:description', content: pageDesc },
+    { property: 'og:url', content: canonicalUrl.value },
+    { property: 'og:locale', content: 'ar_AR' },
+    { name: 'twitter:card', content: 'summary_large_image' },
+    { name: 'twitter:title', content: pageTitle.value },
+    { name: 'twitter:description', content: pageDesc },
+  ],
+  script: [
+    {
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'CollectionPage',
+        name: pageTitle.value,
+        description: pageDesc,
+        url: canonicalUrl.value,
+        inLanguage: 'ar',
+        mainEntity: {
+          '@type': 'ItemList',
+          itemListElement: posts.value.map((post, index) => ({
+            '@type': 'ListItem',
+            position: index + 1,
+            url: `${SITE_URL}/news/${post.slug}`,
+            name: post.title_ar,
+          })),
+        },
+      }),
+    },
+  ],
+}))
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50">
+  <div class="min-h-screen bg-gray-50" dir="rtl">
+    <!-- API Warning Banner -->
+    <div v-if="!apiAvailable" role="alert" class="bg-amber-50 border-b border-amber-200">
+      <div class="max-w-7xl mx-auto px-4 py-3 text-center">
+        <p class="text-amber-700 text-sm font-medium">
+          ⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي
+        </p>
+      </div>
+    </div>
+
     <!-- Header Section -->
     <section class="bg-white border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -128,56 +251,8 @@ useHead({
       </div>
     </section>
 
-    <!-- Loading State -->
-    <div v-if="loading" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <div
-          v-for="n in 6"
-          :key="n"
-          class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden animate-pulse"
-        >
-          <div class="h-48 bg-gray-200"></div>
-          <div class="p-5 space-y-3">
-            <div class="h-4 bg-gray-200 rounded w-1/4"></div>
-            <div class="h-6 bg-gray-200 rounded w-3/4"></div>
-            <div class="h-4 bg-gray-200 rounded w-full"></div>
-            <div class="h-4 bg-gray-200 rounded w-2/3"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Error State -->
-    <div
-      v-else-if="error"
-      class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center"
-    >
-      <div class="bg-red-50 border border-red-200 rounded-xl p-8 max-w-md mx-auto">
-        <svg
-          class="w-12 h-12 text-red-500 mx-auto mb-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
-          />
-        </svg>
-        <p class="text-red-700 font-medium mb-4">{{ error }}</p>
-        <button
-          @click="fetchPosts"
-          class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-        >
-          إعادة المحاولة
-        </button>
-      </div>
-    </div>
-
     <!-- Posts Grid -->
-    <section v-else class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <article
           v-for="post in posts"
@@ -187,28 +262,21 @@ useHead({
           <!-- Featured Image -->
           <div class="relative h-48 overflow-hidden bg-gray-100">
             <img
-              v-if="post.featured_image"
-              :src="post.featured_image.startsWith('http') ? post.featured_image : API_BASE + post.featured_image"
+              v-if="getImageUrl(post.featured_image)"
+              :src="getImageUrl(post.featured_image)!"
               :alt="post.title_ar"
+              width="400"
+              height="192"
               class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               loading="lazy"
             />
             <div
               v-else
               class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"
+              aria-hidden="true"
             >
-              <svg
-                class="w-16 h-16 text-gray-300"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.5"
-                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                />
+              <svg class="w-16 h-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
               </svg>
             </div>
 
@@ -236,10 +304,8 @@ useHead({
             </div>
 
             <!-- Title -->
-            <h2
-              class="text-lg font-bold text-gray-900 mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors leading-relaxed"
-            >
-              <NuxtLink :to="`/news/${post.slug}`">
+            <h2 class="text-lg font-bold text-gray-900 mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors leading-relaxed">
+              <NuxtLink :to="`/news/${post.slug}`" class="focus:outline-none focus:ring-2 focus:ring-orange-400 rounded">
                 {{ post.title_ar }}
               </NuxtLink>
             </h2>
@@ -252,58 +318,23 @@ useHead({
             <!-- Meta -->
             <div class="flex items-center justify-between pt-4 border-t border-gray-100">
               <div class="flex items-center gap-2 text-xs text-gray-500">
-                <svg
-                  class="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-                  />
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
                 </svg>
                 <span>{{ post.author_info.display_name_ar }}</span>
               </div>
 
               <div class="flex items-center gap-3 text-xs text-gray-500">
-                <span class="flex items-center gap-1">
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                    />
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                    />
+                <span class="flex items-center gap-1" :aria-label="`${post.views_count} مشاهدة`">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                   </svg>
                   {{ post.views_count }}
                 </span>
                 <span class="flex items-center gap-1">
-                  <svg
-                    class="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                    />
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                   </svg>
                   {{ formatDate(post.created_at) }}
                 </span>
@@ -317,18 +348,8 @@ useHead({
                 class="inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700 transition-colors"
               >
                 قراءة المزيد
-                <svg
-                  class="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M15 19l-7-7 7-7"
-                  />
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                 </svg>
               </NuxtLink>
             </div>
@@ -337,25 +358,35 @@ useHead({
       </div>
 
       <!-- Empty State -->
-      <div
-        v-if="posts.length === 0 && !loading"
-        class="text-center py-16"
-      >
-        <svg
-          class="w-16 h-16 text-gray-300 mx-auto mb-4"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="1.5"
-            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-          />
+      <div v-if="posts.length === 0" class="text-center py-16" role="status" aria-live="polite">
+        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
         </svg>
         <p class="text-gray-500 text-lg">لا توجد مقالات متاحة حالياً</p>
       </div>
+
+      <!-- Pagination -->
+      <nav
+        v-if="hasNext || hasPrevious"
+        class="flex items-center justify-center gap-4 mt-12"
+        aria-label="تصفح الصفحات"
+      >
+        <NuxtLink
+          v-if="hasPrevious"
+          :to="currentPage === 2 ? '/blog' : `/blog?page=${currentPage - 1}`"
+          class="px-5 py-2 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium"
+        >
+          السابق
+        </NuxtLink>
+        <span class="text-gray-500 text-sm">صفحة {{ currentPage }}</span>
+        <NuxtLink
+          v-if="hasNext"
+          :to="`/blog?page=${currentPage + 1}`"
+          class="px-5 py-2 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium"
+        >
+          التالي
+        </NuxtLink>
+      </nav>
     </section>
   </div>
 </template>
