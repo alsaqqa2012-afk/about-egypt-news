@@ -156,7 +156,7 @@ const { data: pageData } = await useAsyncData('home-page', async () => {
   // 1. Fetch Categories
   try {
     const catData = await fetchWithRetry<ApiResponse<Category>>(
-      `${API_BASE}/api/blog/blog-categories/`
+      `${API_BASE}/blog/blog-categories/`
     )
     const filtered = catData.results.filter(c => c.show_on_menu && c.posts_count > 0)
     categories = filtered.length > 0 ? filtered : fallbackCategories
@@ -169,7 +169,7 @@ const { data: pageData } = await useAsyncData('home-page', async () => {
   // 2. Fetch Latest Posts
   try {
     const latestData = await fetchWithRetry<BlogPost[] | ApiResponse<BlogPost>>(
-      `${API_BASE}/api/blog/blog-posts/latest/`
+      `${API_BASE}/blog/blog-posts/latest/`
     )
     // يدعم array مباشر أو ApiResponse
     const posts = Array.isArray(latestData)
@@ -186,7 +186,7 @@ const { data: pageData } = await useAsyncData('home-page', async () => {
       try {
         const postsData = apiAvailable
           ? await fetchWithRetry<ApiResponse<BlogPost>>(
-              `${API_BASE}/api/blog/blog-categories/${encodeURIComponent(cat.slug)}/posts/`
+              `${API_BASE}/blog/blog-categories/${encodeURIComponent(cat.slug)}/posts/`
             )
           : { results: fallbackPosts, count: 0, next: null, previous: null }
 
