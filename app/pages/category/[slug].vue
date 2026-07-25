@@ -2,8 +2,10 @@
 // ============================================================
 // صفحة تفاصيل الفئة - Category Detail
 // المسار: /category/:slug
-// API Categories: /api/blog/blog-categories/
-// API Posts: /api/blog/blog-categories/{slug}/posts/
+// ✅ SSR للتحميل الأول (useAsyncData) — الفئة + أول صفحة مقالات
+// ✅ "تحميل المزيد" يبقى client-side (تجربة مستخدم أفضل بدون إعادة تحميل الصفحة)
+// ✅ SEO كامل (OG + Twitter + JSON-LD Article List + Breadcrumb + Canonical)
+// ✅ 404 حقيقي لو الفئة غير موجودة (createError)
 // ============================================================
 
 interface Tag {
@@ -53,19 +55,13 @@ interface ApiResponse<T> {
 
 // --- Route ---
 const route = useRoute()
-const slug = route.params.slug as string
+const slug = computed(() => route.params.slug as string)
 
-// --- State ---
-const category = ref<Category | null>(null)
-const posts = ref<BlogPost[]>([])
-const loading = ref(true)
-const error = ref<string | null>(null)
-const currentPage = ref(1)
-const totalCount = ref(0)
-const hasMore = ref(false)
-const apiAvailable = ref(true)
-
-const API_BASE = 'https://89.167.10.171.nip.io'
+// --- Config ---
+const config = useRuntimeConfig()
+const API_BASE = config.public.apiBase || 'https://89.167.10.171.nip.io/api'
+const SITE_URL = config.public.siteUrl || 'https://about-egypt-news.vercel.app'
+const MEDIA_BASE = API_BASE.replace(/\/api\/?$/, '')
 
 // --- Fallback Data ---
 const fallbackCategory: Category = {
@@ -103,89 +99,12 @@ const fallbackPosts: BlogPost[] = [
   },
 ]
 
-// --- Fetch with Retry ---
-const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
-  let lastError: any
-  for (let i = 0; i <= retries; i++) {
-    try {
-      return await $fetch<T>(url, { retry: 0, timeout: 10000 })
-    } catch (err) {
-      lastError = err
-      console.warn(`Attempt ${i + 1} failed for ${url}`, err)
-      if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
-    }
-  }
-  throw lastError
+// --- Helpers ---
+const getImageUrl = (url: string | null | undefined): string | null => {
+  if (!url) return null
+  return url.startsWith('http') ? url : `${MEDIA_BASE}${url}`
 }
 
-// --- Fetch Category + Posts ---
-const fetchCategoryData = async () => {
-  loading.value = true
-  error.value = null
-
-  try {
-    // 1. جلب تفاصيل الفئة
-    const categoriesData = await fetchWithRetry<ApiResponse<Category>>(
-      `${API_BASE}/api/blog/blog-categories/`
-    )
-    const foundCategory = categoriesData.results.find((c) => c.slug === slug)
-
-    if (!foundCategory) {
-      // استخدام fallback لو الفئة مش موجودة في API
-      category.value = fallbackCategory
-      apiAvailable.value = false
-    } else {
-      category.value = foundCategory
-      apiAvailable.value = true
-    }
-
-    // 2. جلب المقالات التابعة للفئة
-    await fetchPosts()
-  } catch (err) {
-    console.error('Error:', err)
-    // استخدام fallback
-    category.value = fallbackCategory
-    apiAvailable.value = false
-    await fetchPosts()
-  }
-}
-
-// --- Fetch Posts (CORRECT ENDPOINT) ---
-const fetchPosts = async () => {
-  try {
-    const data = await fetchWithRetry<ApiResponse<BlogPost>>(
-      `${API_BASE}/api/blog/blog-categories/${encodeURIComponent(slug)}/posts/?page=${currentPage.value}`
-    )
-
-    if (currentPage.value === 1) {
-      posts.value = data.results
-    } else {
-      posts.value.push(...data.results)
-    }
-
-    totalCount.value = data.count
-    hasMore.value = !!data.next
-  } catch (err) {
-    console.error('Error fetching posts:', err)
-    // استخدام fallback
-    if (currentPage.value === 1) {
-      posts.value = fallbackPosts
-      totalCount.value = fallbackPosts.length
-    }
-    hasMore.value = false
-  } finally {
-    loading.value = false
-  }
-}
-
-// --- Load More ---
-const loadMore = async () => {
-  if (!hasMore.value || loading.value) return
-  currentPage.value++
-  await fetchPosts()
-}
-
-// --- Format Date ---
 const formatDate = (dateString: string): string => {
   const date = new Date(dateString)
   return new Intl.DateTimeFormat('ar-SA', {
@@ -195,43 +114,184 @@ const formatDate = (dateString: string): string => {
   }).format(date)
 }
 
-// --- Strip HTML ---
 const stripHtml = (html: string): string => {
   if (!html) return ''
-  return html.replace(/<[^>]*>/g, '').substring(0, 150) + '...'
+  const clean = html.replace(/<[^>]*>/g, '').trim()
+  return clean.length > 150 ? clean.substring(0, 150) + '...' : clean
 }
 
-// --- Lifecycle ---
-onMounted(() => {
-  fetchCategoryData()
+// --- Fetch with Retry ---
+const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
+  let lastError: any
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await $fetch<T>(url, { retry: 0, timeout: 10000, headers: { Accept: 'application/json' } })
+    } catch (err) {
+      lastError = err
+      if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
+    }
+  }
+  throw lastError
+}
+
+// --- SSR Data Fetch (الفئة + أول صفحة مقالات) ---
+const { data: pageData } = await useAsyncData(
+  `category-${slug.value}`,
+  async () => {
+    let apiAvailable = true
+    let category: Category | null = null
+
+    // 1. جلب تفاصيل الفئة
+    try {
+      const categoriesData = await fetchWithRetry<ApiResponse<Category>>(
+        `${API_BASE}/blog/blog-categories/`
+      )
+      category = categoriesData.results.find((c) => c.slug === slug.value) ?? null
+      if (!category) apiAvailable = false
+    } catch {
+      apiAvailable = false
+    }
+
+    if (!category) category = fallbackCategory
+
+    // 2. جلب أول صفحة مقالات
+    try {
+      const postsData = await fetchWithRetry<ApiResponse<BlogPost>>(
+        `${API_BASE}/blog/blog-categories/${encodeURIComponent(slug.value)}/posts/?page=1`
+      )
+      return {
+        category,
+        posts: postsData.results,
+        totalCount: postsData.count,
+        hasMore: !!postsData.next,
+        apiAvailable,
+      }
+    } catch {
+      return {
+        category,
+        posts: fallbackPosts,
+        totalCount: fallbackPosts.length,
+        hasMore: false,
+        apiAvailable: false,
+      }
+    }
+  },
+  { watch: [slug] }
+)
+
+// لو الفئة مش موجودة خالص ولا حتى fallback منطقي، ارجع 404 حقيقي
+if (!pageData.value?.category) {
+  throw createError({ statusCode: 404, statusMessage: 'القسم غير موجود' })
+}
+
+// --- Local State (لإدارة "تحميل المزيد" على الـ Client) ---
+const posts = ref<BlogPost[]>(pageData.value.posts)
+const totalCount = ref(pageData.value.totalCount)
+const hasMore = ref(pageData.value.hasMore)
+const apiAvailable = ref(pageData.value.apiAvailable)
+const category = computed(() => pageData.value?.category ?? fallbackCategory)
+const currentPage = ref(1)
+const loadingMore = ref(false)
+
+// إعادة الضبط عند تغيير الفئة (تنقل بين أقسام مختلفة)
+watch(pageData, (val) => {
+  if (!val) return
+  posts.value = val.posts
+  totalCount.value = val.totalCount
+  hasMore.value = val.hasMore
+  apiAvailable.value = val.apiAvailable
+  currentPage.value = 1
 })
 
-// --- Watch slug changes ---
-watch(() => route.params.slug, () => {
-  currentPage.value = 1
-  posts.value = []
-  fetchCategoryData()
-})
+// --- Load More (Client-side فقط) ---
+const loadMore = async () => {
+  if (!hasMore.value || loadingMore.value) return
+  loadingMore.value = true
+  try {
+    const nextPage = currentPage.value + 1
+    const data = await fetchWithRetry<ApiResponse<BlogPost>>(
+      `${API_BASE}/blog/blog-categories/${encodeURIComponent(slug.value)}/posts/?page=${nextPage}`
+    )
+    posts.value.push(...data.results)
+    currentPage.value = nextPage
+    hasMore.value = !!data.next
+  } catch {
+    hasMore.value = false
+  } finally {
+    loadingMore.value = false
+  }
+}
 
 // --- SEO ---
-useHead(() => {
-  if (!category.value) return {}
-  return {
-    title: `${category.value.name_ar} - عن مصر`,
-    meta: [
-      {
-        name: 'description',
-        content: category.value.description_ar || `استعرض أحدث المقالات في قسم ${category.value.name_ar}`,
-      },
-    ],
-  }
+const canonicalUrl = computed(() => `${SITE_URL}/category/${slug.value}`)
+const pageTitle = computed(() => `${category.value.name_ar} - عن مصر`)
+const pageDesc = computed(
+  () => category.value.description_ar || `استعرض أحدث المقالات في قسم ${category.value.name_ar}`
+)
+const ogImage = computed(() => {
+  const first = posts.value[0]?.featured_image
+  return first ? getImageUrl(first) : `${SITE_URL}/og-default.jpg`
 })
+
+useHead(() => ({
+  title: pageTitle.value,
+  htmlAttrs: { lang: 'ar', dir: 'rtl' },
+  link: [{ rel: 'canonical', href: canonicalUrl.value }],
+  meta: [
+    { name: 'description', content: pageDesc.value },
+    { name: 'robots', content: 'index, follow' },
+    { property: 'og:type', content: 'website' },
+    { property: 'og:title', content: pageTitle.value },
+    { property: 'og:description', content: pageDesc.value },
+    { property: 'og:image', content: ogImage.value ?? '' },
+    { property: 'og:url', content: canonicalUrl.value },
+    { property: 'og:locale', content: 'ar_AR' },
+    { name: 'twitter:card', content: 'summary_large_image' },
+    { name: 'twitter:title', content: pageTitle.value },
+    { name: 'twitter:description', content: pageDesc.value },
+    { name: 'twitter:image', content: ogImage.value ?? '' },
+  ],
+  script: [
+    {
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'CollectionPage',
+        name: pageTitle.value,
+        description: pageDesc.value,
+        url: canonicalUrl.value,
+        inLanguage: 'ar',
+        mainEntity: {
+          '@type': 'ItemList',
+          itemListElement: posts.value.map((post, index) => ({
+            '@type': 'ListItem',
+            position: index + 1,
+            url: `${SITE_URL}/news/${post.slug}`,
+            name: post.title_ar,
+          })),
+        },
+      }),
+    },
+    {
+      type: 'application/ld+json',
+      innerHTML: JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'الرئيسية', item: SITE_URL },
+          { '@type': 'ListItem', position: 2, name: 'الأقسام', item: `${SITE_URL}/category` },
+          { '@type': 'ListItem', position: 3, name: category.value.name_ar, item: canonicalUrl.value },
+        ],
+      }),
+    },
+  ],
+}))
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50">
+  <div class="min-h-screen bg-gray-50" dir="rtl">
     <!-- API Status Warning -->
-    <div v-if="!apiAvailable" class="bg-amber-50 border-b border-amber-200">
+    <div v-if="!apiAvailable" role="alert" class="bg-amber-50 border-b border-amber-200">
       <div class="max-w-7xl mx-auto px-4 py-3 text-center">
         <p class="text-amber-700 text-sm">
           ⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي
@@ -240,13 +300,9 @@ useHead(() => {
     </div>
 
     <!-- Category Header -->
-    <section
-      v-if="category"
-      class="relative overflow-hidden"
-      :style="{ backgroundColor: category.color || '#1e293b' }"
-    >
+    <section class="relative overflow-hidden" :style="{ backgroundColor: category.color || '#1e293b' }">
       <!-- Background Pattern -->
-      <div class="absolute inset-0 opacity-10">
+      <div class="absolute inset-0 opacity-10" aria-hidden="true">
         <svg class="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
           <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
             <path d="M 10 0 L 0 0 0 10" fill="none" stroke="white" stroke-width="0.5"/>
@@ -257,17 +313,20 @@ useHead(() => {
 
       <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <!-- Breadcrumb -->
-        <nav class="flex items-center gap-2 text-sm text-white/70 mb-6">
+        <nav class="flex items-center gap-2 text-sm text-white/70 mb-6" aria-label="Breadcrumb">
           <NuxtLink to="/" class="hover:text-white transition-colors">الرئيسية</NuxtLink>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+          </svg>
+          <NuxtLink to="/category" class="hover:text-white transition-colors">الأقسام</NuxtLink>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
           </svg>
           <span class="text-white">{{ category.name_ar }}</span>
         </nav>
 
         <div class="flex items-center gap-4">
-          <!-- Category Icon Placeholder -->
-          <div class="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm">
+          <div class="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-sm" aria-hidden="true">
             <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
             </svg>
@@ -281,8 +340,8 @@ useHead(() => {
               {{ category.description_ar }}
             </p>
             <div class="flex items-center gap-4 mt-3 text-white/70 text-sm">
-              <span class="flex items-center gap-1">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <span class="flex items-center gap-1" :aria-label="`${totalCount} مقال`">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
                 {{ totalCount }} مقال
@@ -293,58 +352,13 @@ useHead(() => {
       </div>
     </section>
 
-    <!-- Loading State -->
-    <div v-if="loading && posts.length === 0" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <div
-          v-for="n in 6"
-          :key="n"
-          class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden animate-pulse"
-        >
-          <div class="h-48 bg-gray-200"></div>
-          <div class="p-5 space-y-3">
-            <div class="h-4 bg-gray-200 rounded w-1/4"></div>
-            <div class="h-6 bg-gray-200 rounded w-3/4"></div>
-            <div class="h-4 bg-gray-200 rounded w-full"></div>
-            <div class="h-4 bg-gray-200 rounded w-2/3"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Error State -->
-    <div
-      v-else-if="error && posts.length === 0"
-      class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center"
-    >
-      <div class="bg-red-50 border border-red-200 rounded-xl p-8 max-w-md mx-auto">
-        <svg class="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
-        </svg>
-        <p class="text-red-700 font-medium mb-4">{{ error }}</p>
-        <button
-          @click="fetchCategoryData"
-          class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-        >
-          إعادة المحاولة
-        </button>
-      </div>
-    </div>
-
     <!-- Posts Grid -->
-    <section v-else class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <!-- Results Count -->
       <div class="flex items-center justify-between mb-8">
         <p class="text-gray-600">
           تم العثور على <span class="font-bold text-gray-900">{{ totalCount }}</span> مقال
         </p>
-
-        <!-- Sort Dropdown (placeholder) -->
-        <select class="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm text-gray-700 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none">
-          <option value="newest">الأحدث</option>
-          <option value="oldest">الأقدم</option>
-          <option value="popular">الأكثر مشاهدة</option>
-        </select>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -356,15 +370,18 @@ useHead(() => {
           <!-- Image -->
           <div class="relative h-48 overflow-hidden bg-gray-100">
             <img
-              v-if="post.featured_image"
-              :src="post.featured_image.startsWith('http') ? post.featured_image : API_BASE + post.featured_image"
+              v-if="getImageUrl(post.featured_image)"
+              :src="getImageUrl(post.featured_image)!"
               :alt="post.title_ar"
+              width="400"
+              height="192"
               class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               loading="lazy"
             />
             <div
               v-else
               class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"
+              aria-hidden="true"
             >
               <svg class="w-16 h-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
@@ -396,7 +413,7 @@ useHead(() => {
 
             <!-- Title -->
             <h2 class="text-lg font-bold text-gray-900 mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors leading-relaxed">
-              <NuxtLink :to="`/news/${post.slug}`">
+              <NuxtLink :to="`/news/${post.slug}`" class="focus:outline-none focus:ring-2 focus:ring-orange-400 rounded">
                 {{ post.title_ar }}
               </NuxtLink>
             </h2>
@@ -409,22 +426,22 @@ useHead(() => {
             <!-- Meta -->
             <div class="flex items-center justify-between pt-4 border-t border-gray-100">
               <div class="flex items-center gap-2 text-xs text-gray-500">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
                 </svg>
                 <span>{{ post.author_info.display_name_ar }}</span>
               </div>
 
               <div class="flex items-center gap-3 text-xs text-gray-500">
-                <span class="flex items-center gap-1">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <span class="flex items-center gap-1" :aria-label="`${post.views_count} مشاهدة`">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                   </svg>
                   {{ post.views_count }}
                 </span>
                 <span class="flex items-center gap-1">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
                   </svg>
                   {{ formatDate(post.created_at) }}
@@ -439,7 +456,7 @@ useHead(() => {
                 class="inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700 transition-colors"
               >
                 قراءة المزيد
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                 </svg>
               </NuxtLink>
@@ -449,8 +466,8 @@ useHead(() => {
       </div>
 
       <!-- Empty State -->
-      <div v-if="posts.length === 0 && !loading" class="text-center py-20">
-        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div v-if="posts.length === 0" class="text-center py-20" role="status" aria-live="polite">
+        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
         </svg>
         <p class="text-gray-500 text-lg">لا توجد مقالات في هذا القسم</p>
@@ -459,14 +476,14 @@ useHead(() => {
         </NuxtLink>
       </div>
 
-      <!-- Load More -->
+      <!-- Load More (Client-side) -->
       <div v-if="hasMore" class="flex justify-center mt-12">
         <button
           @click="loadMore"
-          :disabled="loading"
+          :disabled="loadingMore"
           class="px-8 py-3 bg-orange-600 text-white font-bold rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          <svg v-if="loading" class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+          <svg v-if="loadingMore" class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
