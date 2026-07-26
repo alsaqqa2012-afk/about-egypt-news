@@ -1,4 +1,11 @@
 <script setup lang="ts">
+// ============================================================
+// صفحة الوسم - Tag Page (SEO Optimized)
+// ✅ SEO كامل (OG + Twitter + JSON-LD + Canonical)
+// ✅ Pagination: rel=prev/next + canonical صحيح
+// ✅ formatDate بتوقيت Africa/Cairo
+// ============================================================
+
 interface Tag {
   id: number
   name_ar: string
@@ -43,28 +50,25 @@ interface PaginatedResponse<T> {
 
 // --- Route ---
 const route = useRoute()
-const slug = route.params.slug as string
-const page = computed(() => Number(route.query.page) || 1)
+const slug  = route.params.slug as string
+const page  = computed(() => Number(route.query.page) || 1)
 
 // --- Config ---
-const config = useRuntimeConfig()
-const API_BASE = (config.public.apiBase as string).replace(/\/?$/, '/')
-const SITE_URL = config.public.siteUrl as string
+const config     = useRuntimeConfig()
+const API_BASE   = (config.public.apiBase as string).replace(/\/?$/, '/')
+const SITE_URL   = config.public.siteUrl as string
 const MEDIA_BASE = API_BASE.replace(/\/api\/?$/, '')
 
 // --- Fetch Tag Info ---
 const { data: tagData, error: tagError } = await useFetch<Tag>(
-  `${API_BASE}blog/blog-tags/${slug}/`,  // ✅ بدون encodeURIComponent
-  {
-    key: `tag-${slug}`,
-    server: true,
-  }
+  `${API_BASE}blog/blog-tags/${slug}/`,
+  { key: `tag-${slug}`, server: true }
 )
 
 // --- Fetch Posts ---
 const { data: postsData, pending, error: postsError } =
   await useFetch<PostListItem[] | PaginatedResponse<PostListItem>>(
-    `${API_BASE}blog/blog-tags/${slug}/posts/`,  // ✅ بدون encodeURIComponent
+    `${API_BASE}blog/blog-tags/${slug}/posts/`,
     {
       key: `tag-posts-${slug}-${page.value}`,
       server: true,
@@ -97,32 +101,48 @@ const absoluteUrl = (path: string | null | undefined): string => {
   return path.startsWith('http') ? path : `${MEDIA_BASE}${path}`
 }
 
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString)
-  return new Intl.DateTimeFormat('ar-SA', {
+// ✅ تنسيق التاريخ بتوقيت Africa/Cairo
+const formatDate = (dateString: string): string =>
+  new Intl.DateTimeFormat('ar-SA', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-  }).format(date)
-}
+    timeZone: 'Africa/Cairo',
+  }).format(new Date(dateString))
 
 const stripHtml = (html: string): string => {
   if (!html) return ''
   return html.replace(/<[^>]*>/g, '').substring(0, 160)
 }
 
-// --- Breadcrumb ---
-const canonicalUrl = computed(() => `${SITE_URL}/tag/${slug}`)
+// --- URLs ---
+// ✅ canonical يعكس رقم الصفحة الحالية بدقة
+const canonicalUrl = computed(() =>
+  page.value > 1
+    ? `${SITE_URL}/tag/${slug}?page=${page.value}`
+    : `${SITE_URL}/tag/${slug}`
+)
 
+const prevPageUrl = computed(() =>
+  page.value === 2
+    ? `${SITE_URL}/tag/${slug}`
+    : `${SITE_URL}/tag/${slug}?page=${page.value - 1}`
+)
+
+const nextPageUrl = computed(() =>
+  `${SITE_URL}/tag/${slug}?page=${page.value + 1}`
+)
+
+// --- Breadcrumb ---
 const breadcrumbItems = computed(() => {
   const items = [
-    { name: 'الرئيسية', url: SITE_URL, path: '/' },
-    { name: 'المقالات', url: `${SITE_URL}/news`, path: '/news' },
+    { name: 'الرئيسية', url: SITE_URL,              path: '/' },
+    { name: 'المقالات', url: `${SITE_URL}/news`,    path: '/news' },
   ]
   if (tagData.value) {
     items.push({
       name: `وسم: ${tagData.value.name_ar}`,
-      url: canonicalUrl.value,
+      url:  canonicalUrl.value,
       path: `/tag/${slug}`,
     })
   }
@@ -132,22 +152,47 @@ const breadcrumbItems = computed(() => {
 // --- SEO ---
 useHead(() => {
   if (!tagData.value) return {}
-  const t = tagData.value
-  const title = `مقالات بوسم ${t.name_ar}`
+
+  const t           = tagData.value
+  const title       = `مقالات بوسم ${t.name_ar}`
   const description = `تصفح كل المقالات المصنّفة تحت وسم "${t.name_ar}" (${t.posts_count} مقال).`
+  const ogImage     = `${SITE_URL}/og-default.jpg`
+
+  // ✅ rel=prev/next + canonical صحيح لكل صفحة
+  const linkTags: any[] = [
+    { rel: 'canonical', href: canonicalUrl.value },
+  ]
+  if (hasPrevPage.value) linkTags.push({ rel: 'prev', href: prevPageUrl.value })
+  if (hasNextPage.value) linkTags.push({ rel: 'next', href: nextPageUrl.value })
 
   return {
+    htmlAttrs: { lang: 'ar', dir: 'rtl' }, // ✅ مضاف
     title,
     meta: [
       { name: 'description', content: description },
-      { property: 'og:type', content: 'website' },
-      { property: 'og:title', content: title },
-      { property: 'og:description', content: description },
-      { property: 'og:url', content: canonicalUrl.value },
-      { name: 'robots', content: 'index, follow' },
+      { name: 'robots',      content: 'index, follow' },
+
+      // ✅ Open Graph - محسّنة
+      { property: 'og:type',         content: 'website' },
+      { property: 'og:title',        content: title },
+      { property: 'og:description',  content: description },
+      { property: 'og:url',          content: canonicalUrl.value },
+      { property: 'og:locale',       content: 'ar_EG' },       // ✅ مضاف
+      { property: 'og:image',        content: ogImage },        // ✅ مضاف
+      { property: 'og:image:width',  content: '1200' },         // ✅ مضاف
+      { property: 'og:image:height', content: '630' },          // ✅ مضاف
+      { property: 'og:image:alt',    content: title },          // ✅ مضاف
+
+      // ✅ Twitter Card - كانت مفقودة كلياً
+      { name: 'twitter:card',        content: 'summary_large_image' },
+      { name: 'twitter:title',       content: title },
+      { name: 'twitter:description', content: description },
+      { name: 'twitter:image',       content: ogImage },
+      { name: 'twitter:image:alt',   content: title },
     ],
-    link: [{ rel: 'canonical', href: canonicalUrl.value }],
+    link: linkTags,
     script: [
+      // ✅ BreadcrumbList
       {
         type: 'application/ld+json',
         innerHTML: JSON.stringify({
@@ -161,14 +206,23 @@ useHead(() => {
           })),
         }),
       },
+      // ✅ CollectionPage - محسّنة
       {
         type: 'application/ld+json',
         innerHTML: JSON.stringify({
           '@context': 'https://schema.org',
           '@type': 'CollectionPage',
+          '@id': `${SITE_URL}/tag/${slug}#collectionpage`, // ✅ مضاف
+          url: canonicalUrl.value,
           name: title,
           description,
-          url: canonicalUrl.value,
+          inLanguage: 'ar-EG', // ✅ مضاف
+          isPartOf: {           // ✅ مضاف
+            '@type': 'WebSite',
+            '@id': `${SITE_URL}/#website`,
+            name: 'عن مصر',
+            url: SITE_URL,
+          },
         }),
       },
     ],
@@ -178,7 +232,8 @@ useHead(() => {
 
 <template>
   <div class="min-h-screen bg-light-bg">
-    <!-- حالة الخطأ: الوسم غير موجود -->
+
+    <!-- حالة الخطأ -->
     <div v-if="notFound" class="max-w-5xl mx-auto px-4 py-16 text-center">
       <div class="bg-red-50 border border-red-200 rounded-xl p-8 max-w-md mx-auto">
         <svg class="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -193,6 +248,7 @@ useHead(() => {
 
     <template v-else>
       <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-16">
+
         <!-- Breadcrumb -->
         <nav
           class="flex items-center gap-2 text-sm text-muted mb-6 flex-wrap"
@@ -210,7 +266,7 @@ useHead(() => {
               </NuxtLink>
               <meta itemprop="position" :content="String(index + 1)" />
             </span>
-            <svg v-if="index < breadcrumbItems.length - 1" class="w-4 h-4 rtl:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg v-if="index < breadcrumbItems.length - 1" class="w-4 h-4 rtl:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
             </svg>
           </template>
@@ -289,11 +345,11 @@ useHead(() => {
                   <span v-if="post.author_info">{{ post.author_info.display_name_ar }}</span>
                   <span>{{ formatDate(post.created_at) }}</span>
                   <span class="flex items-center gap-1">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                     </svg>
-                    {{ post.views_count }}
+                    {{ post.views_count.toLocaleString('ar-SA') }}
                   </span>
                 </div>
               </div>
@@ -301,16 +357,18 @@ useHead(() => {
           </article>
         </div>
 
-        <!-- ترقيم الصفحات -->
+        <!-- ✅ ترقيم الصفحات -->
         <div v-if="hasPrevPage || hasNextPage" class="flex items-center justify-between mt-8">
           <NuxtLink
             v-if="hasPrevPage"
-            :to="{ path: `/tag/${slug}`, query: { page: page - 1 } }"
+            :to="page - 1 === 1 ? `/tag/${slug}` : { path: `/tag/${slug}`, query: { page: page - 1 } }"
             class="px-4 py-2 bg-surface border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
           >
             ← الصفحة السابقة
           </NuxtLink>
           <span v-else></span>
+
+          <span class="text-sm text-muted">صفحة {{ page }}</span>
 
           <NuxtLink
             v-if="hasNextPage"
@@ -320,6 +378,7 @@ useHead(() => {
             الصفحة التالية →
           </NuxtLink>
         </div>
+
       </div>
     </template>
   </div>

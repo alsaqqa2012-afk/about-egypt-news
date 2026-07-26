@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // ============================================================
-// صفحة سياسة الخصوصية - Privacy Policy (ديناميكية من API)
-// API: https://89.167.10.171.nip.io/api/pages/privacy-policy/
+// صفحة سياسة الخصوصية - Privacy Policy (SEO Optimized)
+// ✅ SSR عبر useAsyncData بدل onMounted
+// ✅ SEO كامل (OG + Twitter + JSON-LD + Canonical)
 // ============================================================
 import { marked } from 'marked'
 
@@ -21,72 +22,20 @@ interface PageData {
   updated_at: string
 }
 
-// --- Markdown renderer options ---
+// --- Markdown renderer ---
 marked.setOptions({ breaks: true })
 
-// --- State ---
-const page = ref<PageData | null>(null)
-const loading = ref(true)
-const error = ref<string | null>(null)
-const apiAvailable = ref(true)
+// --- Config ---
+const config = useRuntimeConfig()
+const API_BASE = (config.public.apiBase as string).replace(/\/api\/?$/, '')
+const SITE_URL = config.public.siteUrl as string
 
-const API_BASE = 'https://89.167.10.171.nip.io'
-
-// --- Fallback Data (من البيانات اللي ارسلتها) ---
+// --- Fallback Data ---
 const fallbackPage: PageData = {
   id: 6,
   title: 'سياسة الخصوصية',
   slug: 'privacy-policy',
-  content: `مرحبًا بكم في موقع **عن مصر**. نحن نولي أهمية كبيرة لخصوصية زوارنا، ونلتزم بحماية المعلومات التي يتم جمعها واستخدامها وفقًا لأفضل الممارسات والمعايير المتبعة.
-
-## المعلومات التي نقوم بجمعها
-
-قد نقوم بجمع بعض المعلومات عند زيارة المستخدم للموقع، مثل:
-
-* عنوان بروتوكول الإنترنت (IP).
-* نوع المتصفح والجهاز المستخدم.
-* الصفحات التي يتم زيارتها ومدة التصفح.
-* المعلومات التي يرسلها المستخدم بشكل مباشر عبر نماذج التواصل أو الاشتراك.
-
-يتم استخدام هذه المعلومات لتحسين تجربة المستخدم وتطوير محتوى وخدمات الموقع.
-
-## ملفات تعريف الارتباط (Cookies)
-
-يستخدم موقع **عن مصر** ملفات تعريف الارتباط (Cookies) لتحسين أداء الموقع وتقديم تجربة أفضل للزوار، مثل تذكر تفضيلات المستخدم وتحليل حركة الزيارات.
-
-يمكن للمستخدم التحكم في ملفات تعريف الارتباط أو تعطيلها من خلال إعدادات المتصفح الخاص به.
-
-## الإعلانات
-
-قد يستخدم الموقع خدمات إعلانية مثل **Google AdSense** لعرض الإعلانات المناسبة للزوار. وقد تستخدم هذه الخدمات ملفات تعريف الارتباط وتقنيات مشابهة لعرض إعلانات تعتمد على اهتمامات المستخدمين.
-
-يمكن للمستخدم معرفة المزيد عن كيفية استخدام Google للمعلومات من خلال سياسة الخصوصية الخاصة بخدمات Google.
-
-## تحليلات الموقع
-
-قد نستخدم أدوات تحليل الزيارات لفهم كيفية استخدام الزوار للموقع، وتحسين المحتوى وتجربة الاستخدام، دون جمع معلومات شخصية حساسة.
-
-## حماية المعلومات
-
-نحرص على اتخاذ الإجراءات المناسبة لحماية بيانات المستخدمين ومنع الوصول غير المصرح به إليها، مع العلم أن نقل البيانات عبر الإنترنت لا يمكن ضمان أمانه بشكل كامل.
-
-## روابط المواقع الخارجية
-
-قد يحتوي موقعنا على روابط لمواقع خارجية. نحن غير مسؤولين عن محتوى أو سياسات الخصوصية الخاصة بهذه المواقع، وننصح المستخدمين بمراجعة سياسات الخصوصية الخاصة بها.
-
-## حقوق المستخدم
-
-يحق للمستخدم طلب معرفة المعلومات المتعلقة به أو طلب حذفها إذا كانت متوفرة لدينا، وذلك وفق القوانين والأنظمة المعمول بها.
-
-## تحديث سياسة الخصوصية
-
-قد نقوم بتحديث سياسة الخصوصية من وقت لآخر لمواكبة التغييرات في الخدمات أو القوانين. سيتم نشر أي تحديثات على هذه الصفحة.
-
-## التواصل معنا
-
-إذا كان لديك أي استفسار حول سياسة الخصوصية، يمكنك التواصل معنا عبر صفحة **اتصل بنا**.
-
-آخر تحديث: 2026`,
+  content: `مرحبًا بكم في موقع **عن مصر**. نحن نولي أهمية كبيرة لخصوصية زوارنا، ونلتزم بحماية المعلومات التي يتم جمعها واستخدامها وفقًا لأفضل الممارسات والمعايير المتبعة.`,
   meta_description: 'سياسة الخصوصية لموقع عن مصر توضح كيفية جمع واستخدام وحماية بيانات الزوار، وملفات تعريف الارتباط، والإعلانات، وحقوق المستخدمين.',
   meta_keywords: 'سياسة الخصوصية, عن مصر, حماية البيانات, cookies',
   banner_image_url: null,
@@ -94,8 +43,8 @@ const fallbackPage: PageData = {
   is_published: true,
   show_in_menu: false,
   menu_order: 0,
-  created_at: '2026-07-21T11:14:22.560004+03:00',
-  updated_at: '2026-07-21T11:14:22.560027+03:00',
+  created_at: '2026-07-21T11:14:22.560004+02:00',
+  updated_at: '2026-07-21T11:14:22.560027+02:00',
 }
 
 // --- Fetch with Retry ---
@@ -106,64 +55,106 @@ const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
       return await $fetch<T>(url, { retry: 0, timeout: 10000 })
     } catch (err) {
       lastError = err
-      console.warn(`Attempt ${i + 1} failed for ${url}`, err)
       if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
     }
   }
   throw lastError
 }
 
-// --- Fetch Page Data ---
-const fetchPage = async () => {
-  loading.value = true
-  error.value = null
-
+// ✅ SSR عبر useAsyncData بدل onMounted
+const { data: pageData } = await useAsyncData('privacy-page', async () => {
   try {
-    const data = await fetchWithRetry<PageData>(
-      `${API_BASE}/api/pages/privacy-policy/`
-    )
-    page.value = data
-    apiAvailable.value = true
-  } catch (err) {
-    console.warn('API unavailable, using fallback data')
-    page.value = fallbackPage
-    apiAvailable.value = false
-  } finally {
-    loading.value = false
+    const data = await fetchWithRetry<PageData>(`${API_BASE}/api/pages/privacy-policy/`)
+    return { page: data, apiAvailable: true }
+  } catch {
+    return { page: fallbackPage, apiAvailable: false }
   }
-}
+})
 
-// --- Markdown -> HTML helper ---
+const page         = computed(() => pageData.value?.page ?? null)
+const apiAvailable = computed(() => pageData.value?.apiAvailable ?? true)
+
+// --- Markdown -> HTML ---
 const renderedContent = computed(() => {
   if (!page.value?.content) return ''
   return marked.parse(page.value.content) as string
 })
 
-// --- Lifecycle ---
-onMounted(() => {
-  fetchPage()
-})
-
 // --- SEO ---
+const canonicalUrl = `${SITE_URL}/privacy-policy`
+
 useHead(() => {
-  if (!page.value) {
-    return {
-      title: 'سياسة الخصوصية - عن مصر',
-      meta: [
-        { name: 'description', content: 'اطلع على سياسة الخصوصية الخاصة بموقع عن مصر.' },
-      ],
-    }
-  }
+  const p           = page.value
+  const title       = p ? `${p.title} - عن مصر` : 'سياسة الخصوصية - عن مصر'
+  const description = p?.meta_description || 'اطلع على سياسة الخصوصية الخاصة بموقع عن مصر.'
+  const keywords    = p?.meta_keywords || ''
+  const ogImage     = `${SITE_URL}/og-default.jpg`
+
   return {
-    title: `${page.value.title} - عن مصر`,
+    htmlAttrs: { lang: 'ar', dir: 'rtl' }, // ✅ مضاف
+    title,
     meta: [
+      { name: 'description', content: description },
+      { name: 'keywords',    content: keywords },
+      { name: 'robots',      content: 'index, follow' }, // ✅ مضاف
+
+      // ✅ Open Graph - كانت مفقودة كلياً
+      { property: 'og:type',         content: 'website' },
+      { property: 'og:title',        content: title },
+      { property: 'og:description',  content: description },
+      { property: 'og:url',          content: canonicalUrl },
+      { property: 'og:locale',       content: 'ar_EG' },
+      { property: 'og:image',        content: ogImage },
+      { property: 'og:image:width',  content: '1200' },
+      { property: 'og:image:height', content: '630' },
+      { property: 'og:image:alt',    content: title },
+
+      // ✅ Twitter Card - كانت مفقودة كلياً
+      { name: 'twitter:card',        content: 'summary_large_image' },
+      { name: 'twitter:title',       content: title },
+      { name: 'twitter:description', content: description },
+      { name: 'twitter:image',       content: ogImage },
+      { name: 'twitter:image:alt',   content: title },
+    ],
+    link: [
+      { rel: 'canonical', href: canonicalUrl }, // ✅ مضاف
+    ],
+    script: [
+      // ✅ WebPage Schema - مضافة من الصفر
       {
-        name: 'description',
-        content: page.value.meta_description || '',
+        type: 'application/ld+json',
+        innerHTML: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'WebPage',
+          '@id': `${canonicalUrl}#webpage`,
+          url: canonicalUrl,
+          name: title,
+          description: description,
+          inLanguage: 'ar-EG',
+          isPartOf: {
+            '@type': 'WebSite',
+            '@id': `${SITE_URL}/#website`,
+            name: 'عن مصر',
+            url: SITE_URL,
+          },
+          publisher: {
+            '@type': 'NewsMediaOrganization',
+            '@id': `${SITE_URL}/#organization`,
+            name: 'عن مصر',
+          },
+        }),
       },
+      // ✅ BreadcrumbList - مضافة من الصفر
       {
-        name: 'keywords',
-        content: page.value.meta_keywords || '',
+        type: 'application/ld+json',
+        innerHTML: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'الرئيسية',        item: SITE_URL },
+            { '@type': 'ListItem', position: 2, name: p?.title || 'سياسة الخصوصية', item: canonicalUrl },
+          ],
+        }),
       },
     ],
   }
@@ -172,8 +163,16 @@ useHead(() => {
 
 <template>
   <div class="min-h-screen bg-light-bg">
+
+    <!-- API Status Warning -->
+    <div v-if="!apiAvailable" class="bg-amber-50 border-b border-amber-200">
+      <div class="max-w-4xl mx-auto px-4 py-3 text-center">
+        <p class="text-amber-700 text-sm">⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي</p>
+      </div>
+    </div>
+
     <!-- Loading State -->
-    <div v-if="loading" class="max-w-4xl mx-auto px-4 py-12">
+    <div v-if="!page" class="max-w-4xl mx-auto px-4 py-12">
       <div class="animate-pulse space-y-6">
         <div class="h-10 bg-gray-200 rounded w-1/3"></div>
         <div class="h-6 bg-gray-200 rounded w-full"></div>
@@ -185,41 +184,14 @@ useHead(() => {
       </div>
     </div>
 
-    <!-- Error State -->
-    <div
-      v-else-if="error && !page"
-      class="max-w-4xl mx-auto px-4 py-16 text-center"
-    >
-      <div class="bg-red-50 border border-red-200 rounded-xl p-8 max-w-md mx-auto">
-        <svg class="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
-        </svg>
-        <p class="text-red-700 font-medium mb-4">{{ error }}</p>
-        <button
-          @click="fetchPage"
-          class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-        >
-          إعادة المحاولة
-        </button>
-      </div>
-    </div>
-
     <!-- Content -->
-    <template v-else-if="page">
-      <!-- API Status Warning -->
-      <div v-if="!apiAvailable" class="bg-amber-50 border-b border-amber-200">
-        <div class="max-w-4xl mx-auto px-4 py-3 text-center">
-          <p class="text-amber-700 text-sm">
-            ⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي
-          </p>
-        </div>
-      </div>
-
+    <template v-else>
       <div class="max-w-4xl mx-auto px-4 py-12">
-        <!-- Breadcrumb -->
-        <nav class="flex items-center gap-2 text-sm text-muted mb-6">
+
+        <!-- ✅ Breadcrumb - متطابق مع JSON-LD -->
+        <nav class="flex items-center gap-2 text-sm text-muted mb-6" aria-label="Breadcrumb">
           <NuxtLink to="/" class="hover:text-primary-orange transition-colors">الرئيسية</NuxtLink>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
           </svg>
           <span class="text-body">{{ page.title }}</span>
@@ -227,49 +199,30 @@ useHead(() => {
 
         <!-- Header -->
         <div class="flex items-center gap-2 mb-8">
-          <div class="w-1 h-8 bg-primary-orange rounded" />
-          <h1 class="text-2xl md:text-3xl font-bold text-primary-dark">
-            {{ page.title }}
-          </h1>
+          <div class="w-1 h-8 bg-primary-orange rounded" aria-hidden="true" />
+          <h1 class="text-2xl md:text-3xl font-bold text-primary-dark">{{ page.title }}</h1>
         </div>
 
-        <!-- Main Content (Markdown rendered) -->
+        <!-- Main Content -->
         <div
           v-if="page.content"
           class="prose max-w-none space-y-6 text-body leading-relaxed"
           v-html="renderedContent"
         />
+
       </div>
     </template>
   </div>
 </template>
 
 <style scoped>
-.prose :deep(h1) {
-  @apply text-2xl font-bold text-primary-dark mt-6 mb-4;
-}
-.prose :deep(h2) {
-  @apply text-xl font-bold text-primary-dark mt-8 mb-4;
-}
-.prose :deep(h3) {
-  @apply text-lg font-bold text-primary-dark mt-6 mb-3;
-}
-.prose :deep(p) {
-  @apply text-body leading-relaxed mb-4;
-}
-.prose :deep(ul) {
-  @apply list-disc list-inside space-y-2 mr-4 mb-4;
-}
-.prose :deep(ol) {
-  @apply list-decimal list-inside space-y-2 mr-4 mb-4;
-}
-.prose :deep(li) {
-  @apply text-body;
-}
-.prose :deep(a) {
-  @apply text-primary-orange hover:underline;
-}
-.prose :deep(strong) {
-  @apply font-bold text-primary-dark;
-}
+.prose :deep(h1)     { @apply text-2xl font-bold text-primary-dark mt-6 mb-4; }
+.prose :deep(h2)     { @apply text-xl font-bold text-primary-dark mt-8 mb-4; }
+.prose :deep(h3)     { @apply text-lg font-bold text-primary-dark mt-6 mb-3; }
+.prose :deep(p)      { @apply text-body leading-relaxed mb-4; }
+.prose :deep(ul)     { @apply list-disc list-inside space-y-2 mr-4 mb-4; }
+.prose :deep(ol)     { @apply list-decimal list-inside space-y-2 mr-4 mb-4; }
+.prose :deep(li)     { @apply text-body; }
+.prose :deep(a)      { @apply text-primary-orange hover:underline; }
+.prose :deep(strong) { @apply font-bold text-primary-dark; }
 </style>
