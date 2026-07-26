@@ -1,10 +1,8 @@
 <script setup lang="ts">
 // ============================================================
-// صفحة قائمة المقالات - Blog Posts List
-// ✅ SSR عبر useAsyncData (بدل الجلب من الـ Client فقط)
-// ✅ SEO كامل (OG + Twitter + JSON-LD ItemList + Canonical)
-// ✅ Pagination عبر query param ?page=
-// ✅ نفس نمط الصفحة الرئيسية بالضبط (API_BASE من runtimeConfig)
+// صفحة قائمة المقالات - Blog Posts List (SEO Optimized)
+// ✅ SSR عبر useAsyncData
+// ✅ SEO كامل (OG + Twitter + JSON-LD + Canonical + Pagination)
 // ============================================================
 
 interface Tag {
@@ -48,13 +46,13 @@ interface ApiResponse {
   results: BlogPost[]
 }
 
-// --- Config (نفس نمط الصفحة الرئيسية بالضبط) ---
-const config = useRuntimeConfig()
-const API_BASE = config.public.apiBase || 'https://89.167.10.171.nip.io/api'
-const SITE_URL = config.public.siteUrl || 'https://about-egypt-news.vercel.app'
+// --- Config ---
+const config   = useRuntimeConfig()
+const API_BASE = config.public.apiBase as string
+const SITE_URL = config.public.siteUrl as string
 
 // --- Route / Pagination ---
-const route = useRoute()
+const route       = useRoute()
 const currentPage = computed(() => {
   const p = Number(route.query.page)
   return Number.isFinite(p) && p > 0 ? p : 1
@@ -66,14 +64,14 @@ const getImageUrl = (url: string | null | undefined): string | null => {
   return url.startsWith('http') ? url : `${API_BASE.replace(/\/api\/?$/, '')}${url}`
 }
 
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString)
-  return new Intl.DateTimeFormat('ar-SA', {
+// ✅ تنسيق التاريخ بتوقيت Africa/Cairo
+const formatDate = (dateString: string): string =>
+  new Intl.DateTimeFormat('ar-SA', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-  }).format(date)
-}
+    timeZone: 'Africa/Cairo',
+  }).format(new Date(dateString))
 
 const stripHtml = (html: string): string => {
   if (!html) return ''
@@ -111,14 +109,14 @@ const fallbackPosts: BlogPost[] = [
     category: null,
     tags: [],
     author_info: { display_name_ar: 'عبدالله علاء السقا' },
-    created_at: '2026-07-18T10:18:36.535195+03:00',
+    created_at: '2026-07-18T10:18:36.535195+02:00',
     views_count: 4,
     show_whatsapp_button: false,
     show_telegram_button: false,
   },
 ]
 
-// --- SSR Data Fetch (نفس نمط الصفحة الرئيسية) ---
+// --- SSR Data Fetch ---
 const { data: pageData } = await useAsyncData(
   `blog-posts-page-${currentPage.value}`,
   async () => {
@@ -147,18 +145,28 @@ const { data: pageData } = await useAsyncData(
 )
 
 // --- Computed ---
-const posts = computed(() => pageData.value?.posts ?? [])
-const totalCount = computed(() => pageData.value?.totalCount ?? 0)
-const hasNext = computed(() => pageData.value?.hasNext ?? false)
-const hasPrevious = computed(() => pageData.value?.hasPrevious ?? false)
+const posts        = computed(() => pageData.value?.posts ?? [])
+const totalCount   = computed(() => pageData.value?.totalCount ?? 0)
+const hasNext      = computed(() => pageData.value?.hasNext ?? false)
+const hasPrevious  = computed(() => pageData.value?.hasPrevious ?? false)
 const apiAvailable = computed(() => pageData.value?.apiAvailable ?? true)
 
-// --- Canonical URL (يراعي رقم الصفحة) ---
-const canonicalUrl = computed(() => {
-  return currentPage.value > 1
-    ? `${SITE_URL}/blog?page=${currentPage.value}`
-    : `${SITE_URL}/blog`
-})
+// --- URLs ---
+const canonicalUrl = computed(() =>
+  currentPage.value > 1
+    ? `${SITE_URL}/news?page=${currentPage.value}`
+    : `${SITE_URL}/news`
+)
+
+const prevPageUrl = computed(() =>
+  currentPage.value === 2
+    ? `${SITE_URL}/news`
+    : `${SITE_URL}/news?page=${currentPage.value - 1}`
+)
+
+const nextPageUrl = computed(() =>
+  `${SITE_URL}/news?page=${currentPage.value + 1}`
+)
 
 // --- SEO ---
 const pageTitle = computed(() =>
@@ -166,93 +174,123 @@ const pageTitle = computed(() =>
     ? `آخر الأخبار - صفحة ${currentPage.value} | عن مصر`
     : 'آخر الأخبار | عن مصر'
 )
-const pageDesc =
-  'اطلع على أحدث الأخبار العاجلة، والتقارير السياسية والاقتصادية والرياضية والتكنولوجية من موقع عن مصر.'
+const pageDesc = 'اطلع على أحدث الأخبار العاجلة، والتقارير السياسية والاقتصادية والرياضية والتكنولوجية من موقع عن مصر.'
+const ogImage  = `${SITE_URL}/og-default.jpg`
 
-useHead(() => ({
-  title: pageTitle.value,
-  htmlAttrs: { lang: 'ar', dir: 'rtl' },
-  link: [
-    { rel: 'canonical', href: canonicalUrl.value },
-    ...(hasPrevious.value
-      ? [{
-          rel: 'prev',
-          href: currentPage.value === 2
-            ? `${SITE_URL}/blog`
-            : `${SITE_URL}/blog?page=${currentPage.value - 1}`,
-        }]
-      : []),
-    ...(hasNext.value
-      ? [{ rel: 'next', href: `${SITE_URL}/blog?page=${currentPage.value + 1}` }]
-      : []),
-  ],
-  meta: [
-    { name: 'description', content: pageDesc },
-    { name: 'robots', content: 'index, follow' },
-    { property: 'og:type', content: 'website' },
-    { property: 'og:title', content: pageTitle.value },
-    { property: 'og:description', content: pageDesc },
-    { property: 'og:url', content: canonicalUrl.value },
-    { property: 'og:locale', content: 'ar_AR' },
-    { name: 'twitter:card', content: 'summary_large_image' },
-    { name: 'twitter:title', content: pageTitle.value },
-    { name: 'twitter:description', content: pageDesc },
-  ],
-  script: [
-    {
-      type: 'application/ld+json',
-      innerHTML: JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'CollectionPage',
-        name: pageTitle.value,
-        description: pageDesc,
-        url: canonicalUrl.value,
-        inLanguage: 'ar',
-        mainEntity: {
-          '@type': 'ItemList',
-          itemListElement: posts.value.map((post, index) => ({
-            '@type': 'ListItem',
-            position: index + 1,
-            url: `${SITE_URL}/news/${post.slug}`,
-            name: post.title_ar,
-          })),
-        },
-      }),
-    },
-  ],
-}))
+useHead(() => {
+  const linkTags: any[] = [{ rel: 'canonical', href: canonicalUrl.value }]
+  if (hasPrevious.value) linkTags.push({ rel: 'prev', href: prevPageUrl.value })
+  if (hasNext.value)     linkTags.push({ rel: 'next', href: nextPageUrl.value })
+
+  return {
+    title: pageTitle.value,
+    htmlAttrs: { lang: 'ar', dir: 'rtl' },
+    link: linkTags,
+    meta: [
+      { name: 'description', content: pageDesc },
+      { name: 'robots',      content: 'index, follow' },
+
+      // ✅ og:locale مُصحَّح من ar_AR إلى ar_EG
+      { property: 'og:type',         content: 'website' },
+      { property: 'og:title',        content: pageTitle.value },
+      { property: 'og:description',  content: pageDesc },
+      { property: 'og:url',          content: canonicalUrl.value },
+      { property: 'og:locale',       content: 'ar_EG' },
+      { property: 'og:image',        content: ogImage },        // ✅ مضاف
+      { property: 'og:image:width',  content: '1200' },         // ✅ مضاف
+      { property: 'og:image:height', content: '630' },          // ✅ مضاف
+      { property: 'og:image:alt',    content: pageTitle.value }, // ✅ مضاف
+
+      // ✅ Twitter - كانت ناقصة
+      { name: 'twitter:card',        content: 'summary_large_image' },
+      { name: 'twitter:title',       content: pageTitle.value },
+      { name: 'twitter:description', content: pageDesc },
+      { name: 'twitter:image',       content: ogImage },        // ✅ مضاف
+      { name: 'twitter:image:alt',   content: pageTitle.value }, // ✅ مضاف
+    ],
+    script: [
+      // ✅ BreadcrumbList - مضافة من الصفر
+      {
+        type: 'application/ld+json',
+        innerHTML: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'الرئيسية', item: SITE_URL },
+            { '@type': 'ListItem', position: 2, name: 'المقالات', item: `${SITE_URL}/news` },
+          ],
+        }),
+      },
+      // ✅ CollectionPage - محسّنة
+      {
+        type: 'application/ld+json',
+        innerHTML: JSON.stringify({
+          '@context': 'https://schema.org',
+          '@type': 'CollectionPage',
+          '@id': `${SITE_URL}/news#collectionpage`, // ✅ مضاف
+          url: canonicalUrl.value,
+          name: pageTitle.value,
+          description: pageDesc,
+          inLanguage: 'ar-EG', // ✅ كان 'ar'
+          isPartOf: {           // ✅ مضاف
+            '@type': 'WebSite',
+            '@id': `${SITE_URL}/#website`,
+            name: 'عن مصر',
+            url: SITE_URL,
+          },
+          mainEntity: {
+            '@type': 'ItemList',
+            itemListElement: posts.value.map((post, index) => ({
+              '@type': 'ListItem',
+              position: index + 1,
+              url: `${SITE_URL}/news/${post.slug}`,
+              name: post.title_ar,
+            })),
+          },
+        }),
+      },
+    ],
+  }
+})
 </script>
 
 <template>
   <div class="min-h-screen bg-gray-50" dir="rtl">
+
     <!-- API Warning Banner -->
     <div v-if="!apiAvailable" role="alert" class="bg-amber-50 border-b border-amber-200">
       <div class="max-w-7xl mx-auto px-4 py-3 text-center">
-        <p class="text-amber-700 text-sm font-medium">
-          ⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي
-        </p>
+        <p class="text-amber-700 text-sm font-medium">⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي</p>
       </div>
     </div>
 
     <!-- Header Section -->
     <section class="bg-white border-b border-gray-200">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <!-- ✅ Breadcrumb - مضاف من الصفر -->
+        <nav class="flex items-center gap-2 text-sm text-gray-500 mb-6" aria-label="Breadcrumb">
+          <NuxtLink to="/" class="hover:text-orange-600 transition-colors">الرئيسية</NuxtLink>
+          <svg class="w-4 h-4 rtl:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
+          <span class="text-gray-900 font-medium">المقالات</span>
+        </nav>
+
         <div class="text-center">
-          <h1 class="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-            المقالات
-          </h1>
+          <h1 class="text-4xl md:text-5xl font-bold text-gray-900 mb-4">المقالات</h1>
           <p class="text-lg text-gray-600 max-w-2xl mx-auto">
             استكشف مجموعة متنوعة من الموضوعات المفيدة والمقالات المتخصصة
           </p>
           <div class="mt-4 text-sm text-gray-500">
-            إجمالي المقالات: <span class="font-bold text-orange-600">{{ totalCount }}</span>
+            إجمالي المقالات:
+            <span class="font-bold text-orange-600">{{ totalCount.toLocaleString('ar-SA') }}</span>
           </div>
         </div>
       </div>
     </section>
 
     <!-- Posts Grid -->
-    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12" aria-label="قائمة المقالات">
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <article
           v-for="post in posts"
@@ -270,17 +308,11 @@ useHead(() => ({
               class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               loading="lazy"
             />
-            <div
-              v-else
-              class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"
-              aria-hidden="true"
-            >
+            <div v-else class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200" aria-hidden="true">
               <svg class="w-16 h-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
               </svg>
             </div>
-
-            <!-- Category Badge -->
             <div
               v-if="post.category"
               class="absolute top-3 right-3 px-3 py-1 text-xs font-bold text-white rounded-full"
@@ -305,7 +337,7 @@ useHead(() => ({
 
             <!-- Title -->
             <h2 class="text-lg font-bold text-gray-900 mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors leading-relaxed">
-              <NuxtLink :to="`/news/${post.slug}`" class="focus:outline-none focus:ring-2 focus:ring-orange-400 rounded">
+              <NuxtLink :to="`/news/${post.slug}`" class="focus:outline-none focus:ring-2 focus:ring-orange-400 rounded" :aria-label="post.title_ar">
                 {{ post.title_ar }}
               </NuxtLink>
             </h2>
@@ -323,14 +355,14 @@ useHead(() => ({
                 </svg>
                 <span>{{ post.author_info.display_name_ar }}</span>
               </div>
-
               <div class="flex items-center gap-3 text-xs text-gray-500">
+                <!-- ✅ views_count بـ toLocaleString -->
                 <span class="flex items-center gap-1" :aria-label="`${post.views_count} مشاهدة`">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                   </svg>
-                  {{ post.views_count }}
+                  {{ post.views_count.toLocaleString('ar-SA') }}
                 </span>
                 <span class="flex items-center gap-1">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -373,20 +405,21 @@ useHead(() => ({
       >
         <NuxtLink
           v-if="hasPrevious"
-          :to="currentPage === 2 ? '/blog' : `/blog?page=${currentPage - 1}`"
+          :to="currentPage === 2 ? '/news' : `/news?page=${currentPage - 1}`"
           class="px-5 py-2 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium"
         >
-          السابق
+          ← السابق
         </NuxtLink>
         <span class="text-gray-500 text-sm">صفحة {{ currentPage }}</span>
         <NuxtLink
           v-if="hasNext"
-          :to="`/blog?page=${currentPage + 1}`"
+          :to="`/news?page=${currentPage + 1}`"
           class="px-5 py-2 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors font-medium"
         >
-          التالي
+          التالي →
         </NuxtLink>
       </nav>
+
     </section>
   </div>
 </template>

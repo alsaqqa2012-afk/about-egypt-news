@@ -1,11 +1,9 @@
 <script setup lang="ts">
 // ============================================================
-// صفحة تفاصيل الفئة - Category Detail
-// المسار: /category/:slug
-// ✅ SSR للتحميل الأول (useAsyncData) — الفئة + أول صفحة مقالات
-// ✅ "تحميل المزيد" يبقى client-side (تجربة مستخدم أفضل بدون إعادة تحميل الصفحة)
-// ✅ SEO كامل (OG + Twitter + JSON-LD Article List + Breadcrumb + Canonical)
-// ✅ 404 حقيقي لو الفئة غير موجودة (createError)
+// صفحة تفاصيل الفئة - Category Detail (SEO Optimized)
+// ✅ SSR عبر useAsyncData
+// ✅ SEO كامل (OG + Twitter + JSON-LD + Canonical)
+// ✅ "تحميل المزيد" client-side
 // ============================================================
 
 interface Tag {
@@ -55,12 +53,12 @@ interface ApiResponse<T> {
 
 // --- Route ---
 const route = useRoute()
-const slug = computed(() => route.params.slug as string)
+const slug  = computed(() => route.params.slug as string)
 
 // --- Config ---
-const config = useRuntimeConfig()
-const API_BASE = config.public.apiBase || 'https://89.167.10.171.nip.io/api'
-const SITE_URL = config.public.siteUrl || 'https://about-egypt-news.vercel.app'
+const config     = useRuntimeConfig()
+const API_BASE   = config.public.apiBase as string
+const SITE_URL   = config.public.siteUrl as string
 const MEDIA_BASE = API_BASE.replace(/\/api\/?$/, '')
 
 // --- Fallback Data ---
@@ -83,18 +81,13 @@ const fallbackPosts: BlogPost[] = [
     id: 447,
     title_ar: 'كيف يمكن للانسان صناعة روبوت للاطفال بسهولة',
     slug: 'كيف-يمكن-للانسان-صناعة-روبوت-للاطفال-بسهولة',
-    excerpt_ar: 'تعرف على كيفية صناعة روبون للأطفال خطوة بخطوة، مع نصائح وأفكار مبتكرة تجعل العملية ممتعة وتعليمية.',
+    excerpt_ar: 'تعرف على كيفية صناعة روبوت للأطفال خطوة بخطوة.',
     content_ar: '',
     featured_image: 'https://89.167.10.171.nip.io/media/blog/posts/HNTD-FOWAAA7Ii9.jpg',
     category: null,
-    tags: [
-      { id: 77, name_ar: 'خرف', slug: 'خرف' },
-      { id: 78, name_ar: 'سكين', slug: 'سكين' },
-      { id: 75, name_ar: 'ملكية', slug: 'ملكية' },
-      { id: 76, name_ar: 'منشار', slug: 'منشار' },
-    ],
+    tags: [],
     author_info: { display_name_ar: 'admin' },
-    created_at: '2026-07-18T10:18:36.535195+03:00',
+    created_at: '2026-07-18T10:18:36.535195+02:00',
     views_count: 0,
   },
 ]
@@ -105,14 +98,14 @@ const getImageUrl = (url: string | null | undefined): string | null => {
   return url.startsWith('http') ? url : `${MEDIA_BASE}${url}`
 }
 
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString)
-  return new Intl.DateTimeFormat('ar-SA', {
+// ✅ تنسيق التاريخ بتوقيت Africa/Cairo
+const formatDate = (dateString: string): string =>
+  new Intl.DateTimeFormat('ar-SA', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
-  }).format(date)
-}
+    timeZone: 'Africa/Cairo',
+  }).format(new Date(dateString))
 
 const stripHtml = (html: string): string => {
   if (!html) return ''
@@ -125,7 +118,11 @@ const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
   let lastError: any
   for (let i = 0; i <= retries; i++) {
     try {
-      return await $fetch<T>(url, { retry: 0, timeout: 10000, headers: { Accept: 'application/json' } })
+      return await $fetch<T>(url, {
+        retry: 0,
+        timeout: 10000,
+        headers: { Accept: 'application/json' },
+      })
     } catch (err) {
       lastError = err
       if (i < retries) await new Promise(r => setTimeout(r, 1000 * (i + 1)))
@@ -134,14 +131,13 @@ const fetchWithRetry = async <T,>(url: string, retries = 2): Promise<T> => {
   throw lastError
 }
 
-// --- SSR Data Fetch (الفئة + أول صفحة مقالات) ---
+// --- SSR Data Fetch ---
 const { data: pageData } = await useAsyncData(
   `category-${slug.value}`,
   async () => {
     let apiAvailable = true
     let category: Category | null = null
 
-    // 1. جلب تفاصيل الفئة
     try {
       const categoriesData = await fetchWithRetry<ApiResponse<Category>>(
         `${API_BASE}/blog/blog-categories/`
@@ -154,7 +150,6 @@ const { data: pageData } = await useAsyncData(
 
     if (!category) category = fallbackCategory
 
-    // 2. جلب أول صفحة مقالات
     try {
       const postsData = await fetchWithRetry<ApiResponse<BlogPost>>(
         `${API_BASE}/blog/blog-categories/${encodeURIComponent(slug.value)}/posts/?page=1`
@@ -179,31 +174,29 @@ const { data: pageData } = await useAsyncData(
   { watch: [slug] }
 )
 
-// لو الفئة مش موجودة خالص ولا حتى fallback منطقي، ارجع 404 حقيقي
 if (!pageData.value?.category) {
   throw createError({ statusCode: 404, statusMessage: 'القسم غير موجود' })
 }
 
-// --- Local State (لإدارة "تحميل المزيد" على الـ Client) ---
-const posts = ref<BlogPost[]>(pageData.value.posts)
-const totalCount = ref(pageData.value.totalCount)
-const hasMore = ref(pageData.value.hasMore)
+// --- Local State ---
+const posts        = ref<BlogPost[]>(pageData.value.posts)
+const totalCount   = ref(pageData.value.totalCount)
+const hasMore      = ref(pageData.value.hasMore)
 const apiAvailable = ref(pageData.value.apiAvailable)
-const category = computed(() => pageData.value?.category ?? fallbackCategory)
-const currentPage = ref(1)
-const loadingMore = ref(false)
+const category     = computed(() => pageData.value?.category ?? fallbackCategory)
+const currentPage  = ref(1)
+const loadingMore  = ref(false)
 
-// إعادة الضبط عند تغيير الفئة (تنقل بين أقسام مختلفة)
 watch(pageData, (val) => {
   if (!val) return
-  posts.value = val.posts
+  posts.value      = val.posts
   totalCount.value = val.totalCount
-  hasMore.value = val.hasMore
+  hasMore.value    = val.hasMore
   apiAvailable.value = val.apiAvailable
-  currentPage.value = 1
+  currentPage.value  = 1
 })
 
-// --- Load More (Client-side فقط) ---
+// --- Load More ---
 const loadMore = async () => {
   if (!hasMore.value || loadingMore.value) return
   loadingMore.value = true
@@ -224,14 +217,12 @@ const loadMore = async () => {
 
 // --- SEO ---
 const canonicalUrl = computed(() => `${SITE_URL}/category/${slug.value}`)
-const pageTitle = computed(() => `${category.value.name_ar} - عن مصر`)
-const pageDesc = computed(
-  () => category.value.description_ar || `استعرض أحدث المقالات في قسم ${category.value.name_ar}`
+const pageTitle    = computed(() => `${category.value.name_ar} - عن مصر`)
+const pageDesc     = computed(() =>
+  category.value.description_ar || `استعرض أحدث المقالات في قسم ${category.value.name_ar}`
 )
-const ogImage = computed(() => {
-  const first = posts.value[0]?.featured_image
-  return first ? getImageUrl(first) : `${SITE_URL}/og-default.jpg`
-})
+// ✅ صورة OG ثابتة بدل صورة أول مقال (تتغير مع كل تحديث)
+const ogImage = `${SITE_URL}/og-default.jpg`
 
 useHead(() => ({
   title: pageTitle.value,
@@ -239,28 +230,44 @@ useHead(() => ({
   link: [{ rel: 'canonical', href: canonicalUrl.value }],
   meta: [
     { name: 'description', content: pageDesc.value },
-    { name: 'robots', content: 'index, follow' },
-    { property: 'og:type', content: 'website' },
-    { property: 'og:title', content: pageTitle.value },
-    { property: 'og:description', content: pageDesc.value },
-    { property: 'og:image', content: ogImage.value ?? '' },
-    { property: 'og:url', content: canonicalUrl.value },
-    { property: 'og:locale', content: 'ar_AR' },
-    { name: 'twitter:card', content: 'summary_large_image' },
-    { name: 'twitter:title', content: pageTitle.value },
+    { name: 'robots',      content: 'index, follow' },
+
+    // ✅ og:locale مُصحَّح من ar_AR إلى ar_EG
+    { property: 'og:type',         content: 'website' },
+    { property: 'og:title',        content: pageTitle.value },
+    { property: 'og:description',  content: pageDesc.value },
+    { property: 'og:url',          content: canonicalUrl.value },
+    { property: 'og:locale',       content: 'ar_EG' },
+    { property: 'og:image',        content: ogImage },
+    { property: 'og:image:width',  content: '1200' },         // ✅ مضاف
+    { property: 'og:image:height', content: '630' },          // ✅ مضاف
+    { property: 'og:image:alt',    content: pageTitle.value }, // ✅ مضاف
+
+    // ✅ Twitter - محسّنة
+    { name: 'twitter:card',        content: 'summary_large_image' },
+    { name: 'twitter:title',       content: pageTitle.value },
     { name: 'twitter:description', content: pageDesc.value },
-    { name: 'twitter:image', content: ogImage.value ?? '' },
+    { name: 'twitter:image',       content: ogImage },
+    { name: 'twitter:image:alt',   content: pageTitle.value }, // ✅ مضاف
   ],
   script: [
+    // ✅ CollectionPage - محسّنة
     {
       type: 'application/ld+json',
       innerHTML: JSON.stringify({
         '@context': 'https://schema.org',
         '@type': 'CollectionPage',
+        '@id': `${canonicalUrl.value}#collectionpage`, // ✅ مضاف
+        url: canonicalUrl.value,
         name: pageTitle.value,
         description: pageDesc.value,
-        url: canonicalUrl.value,
-        inLanguage: 'ar',
+        inLanguage: 'ar-EG', // ✅ كان 'ar'
+        isPartOf: {           // ✅ مضاف
+          '@type': 'WebSite',
+          '@id': `${SITE_URL}/#website`,
+          name: 'عن مصر',
+          url: SITE_URL,
+        },
         mainEntity: {
           '@type': 'ItemList',
           itemListElement: posts.value.map((post, index) => ({
@@ -272,6 +279,7 @@ useHead(() => ({
         },
       }),
     },
+    // ✅ BreadcrumbList
     {
       type: 'application/ld+json',
       innerHTML: JSON.stringify({
@@ -279,7 +287,7 @@ useHead(() => ({
         '@type': 'BreadcrumbList',
         itemListElement: [
           { '@type': 'ListItem', position: 1, name: 'الرئيسية', item: SITE_URL },
-          { '@type': 'ListItem', position: 2, name: 'الأقسام', item: `${SITE_URL}/category` },
+          { '@type': 'ListItem', position: 2, name: 'الأقسام',  item: `${SITE_URL}/category` },
           { '@type': 'ListItem', position: 3, name: category.value.name_ar, item: canonicalUrl.value },
         ],
       }),
@@ -290,18 +298,16 @@ useHead(() => ({
 
 <template>
   <div class="min-h-screen bg-gray-50" dir="rtl">
+
     <!-- API Status Warning -->
     <div v-if="!apiAvailable" role="alert" class="bg-amber-50 border-b border-amber-200">
       <div class="max-w-7xl mx-auto px-4 py-3 text-center">
-        <p class="text-amber-700 text-sm">
-          ⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي
-        </p>
+        <p class="text-amber-700 text-sm">⚠️ وضع العرض التجريبي - البيانات من المخزن المحلي</p>
       </div>
     </div>
 
     <!-- Category Header -->
     <section class="relative overflow-hidden" :style="{ backgroundColor: category.color || '#1e293b' }">
-      <!-- Background Pattern -->
       <div class="absolute inset-0 opacity-10" aria-hidden="true">
         <svg class="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
           <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
@@ -331,20 +337,18 @@ useHead(() => ({
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
             </svg>
           </div>
-
           <div>
-            <h1 class="text-3xl md:text-4xl font-bold text-white mb-2">
-              {{ category.name_ar }}
-            </h1>
+            <h1 class="text-3xl md:text-4xl font-bold text-white mb-2">{{ category.name_ar }}</h1>
             <p v-if="category.description_ar" class="text-white/80 text-lg max-w-2xl">
               {{ category.description_ar }}
             </p>
             <div class="flex items-center gap-4 mt-3 text-white/70 text-sm">
+              <!-- ✅ toLocaleString مضاف -->
               <span class="flex items-center gap-1" :aria-label="`${totalCount} مقال`">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
-                {{ totalCount }} مقال
+                {{ totalCount.toLocaleString('ar-SA') }} مقال
               </span>
             </div>
           </div>
@@ -353,11 +357,12 @@ useHead(() => ({
     </section>
 
     <!-- Posts Grid -->
-    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <!-- Results Count -->
+    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12" aria-label="مقالات القسم">
       <div class="flex items-center justify-between mb-8">
         <p class="text-gray-600">
-          تم العثور على <span class="font-bold text-gray-900">{{ totalCount }}</span> مقال
+          تم العثور على
+          <span class="font-bold text-gray-900">{{ totalCount.toLocaleString('ar-SA') }}</span>
+          مقال
         </p>
       </div>
 
@@ -378,17 +383,11 @@ useHead(() => ({
               class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
               loading="lazy"
             />
-            <div
-              v-else
-              class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200"
-              aria-hidden="true"
-            >
+            <div v-else class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200" aria-hidden="true">
               <svg class="w-16 h-16 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
               </svg>
             </div>
-
-            <!-- Category Badge -->
             <div
               v-if="post.category"
               class="absolute top-3 right-3 px-3 py-1 text-xs font-bold text-white rounded-full"
@@ -400,7 +399,6 @@ useHead(() => ({
 
           <!-- Content -->
           <div class="p-5">
-            <!-- Tags -->
             <div v-if="post.tags.length > 0" class="flex flex-wrap gap-1 mb-3">
               <span
                 v-for="tag in post.tags.slice(0, 3)"
@@ -411,19 +409,16 @@ useHead(() => ({
               </span>
             </div>
 
-            <!-- Title -->
             <h2 class="text-lg font-bold text-gray-900 mb-2 line-clamp-2 group-hover:text-orange-600 transition-colors leading-relaxed">
-              <NuxtLink :to="`/news/${post.slug}`" class="focus:outline-none focus:ring-2 focus:ring-orange-400 rounded">
+              <NuxtLink :to="`/news/${post.slug}`" class="focus:outline-none focus:ring-2 focus:ring-orange-400 rounded" :aria-label="post.title_ar">
                 {{ post.title_ar }}
               </NuxtLink>
             </h2>
 
-            <!-- Excerpt -->
             <p class="text-sm text-gray-600 mb-4 line-clamp-3 leading-relaxed">
               {{ stripHtml(post.excerpt_ar) }}
             </p>
 
-            <!-- Meta -->
             <div class="flex items-center justify-between pt-4 border-t border-gray-100">
               <div class="flex items-center gap-2 text-xs text-gray-500">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -431,14 +426,14 @@ useHead(() => ({
                 </svg>
                 <span>{{ post.author_info.display_name_ar }}</span>
               </div>
-
               <div class="flex items-center gap-3 text-xs text-gray-500">
+                <!-- ✅ toLocaleString مضاف -->
                 <span class="flex items-center gap-1" :aria-label="`${post.views_count} مشاهدة`">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                   </svg>
-                  {{ post.views_count }}
+                  {{ post.views_count.toLocaleString('ar-SA') }}
                 </span>
                 <span class="flex items-center gap-1">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -449,12 +444,8 @@ useHead(() => ({
               </div>
             </div>
 
-            <!-- Read More -->
             <div class="mt-4">
-              <NuxtLink
-                :to="`/news/${post.slug}`"
-                class="inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700 transition-colors"
-              >
+              <NuxtLink :to="`/news/${post.slug}`" class="inline-flex items-center gap-1 text-sm font-medium text-orange-600 hover:text-orange-700 transition-colors">
                 قراءة المزيد
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
@@ -476,7 +467,7 @@ useHead(() => ({
         </NuxtLink>
       </div>
 
-      <!-- Load More (Client-side) -->
+      <!-- Load More -->
       <div v-if="hasMore" class="flex justify-center mt-12">
         <button
           @click="loadMore"
@@ -484,12 +475,13 @@ useHead(() => ({
           class="px-8 py-3 bg-orange-600 text-white font-bold rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
           <svg v-if="loadingMore" class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
           </svg>
-          <span>تحميل المزيد</span>
+          <span>{{ loadingMore ? 'جارٍ التحميل...' : 'تحميل المزيد' }}</span>
         </button>
       </div>
+
     </section>
   </div>
 </template>
