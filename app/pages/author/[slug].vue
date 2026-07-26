@@ -65,13 +65,7 @@ const absoluteUrl = (path: string | null | undefined): string => {
 }
 
 // ✅ تنسيق التاريخ بتوقيت Africa/Cairo (+02:00)
-const formatDate = (dateString: string): string =>
-  new Intl.DateTimeFormat('ar-SA', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'Africa/Cairo',
-  }).format(new Date(dateString))
+const { formatDate } = useFormatDate()
 
 // ✅ تحويل أي تاريخ إلى ISO مع timezone القاهرة (+02:00)
 const toISOCairo = (dateString: string): string => {

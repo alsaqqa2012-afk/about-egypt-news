@@ -109,16 +109,7 @@ const getImageMimeType = (url: string): string => {
 
 // ⚠️ إصلاح: 'ar-SA' يستخدم افتراضياً التقويم الهجري (Umm al-Qura) في بعض المتصفحات/البيئات
 // ما يخلي تواريخ الأخبار تظهر بالسنة الهجرية بدل الميلادية. نستخدم 'ar-EG' + calendar: 'gregory' صراحة.
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString)
-  return new Intl.DateTimeFormat('ar-EG', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'Africa/Cairo',
-    calendar: 'gregory',
-  }).format(date)
-}
+const { formatDate } = useFormatDate()
 
 const getPostDate = (post: BlogPost): string => {
   const date = post.published_at || post.created_at

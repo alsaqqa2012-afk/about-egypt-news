@@ -65,13 +65,7 @@ const getImageUrl = (url: string | null | undefined): string | null => {
 }
 
 // ✅ تنسيق التاريخ بتوقيت Africa/Cairo
-const formatDate = (dateString: string): string =>
-  new Intl.DateTimeFormat('ar-SA', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: 'Africa/Cairo',
-  }).format(new Date(dateString))
+const { formatDate } = useFormatDate()
 
 const stripHtml = (html: string): string => {
   if (!html) return ''

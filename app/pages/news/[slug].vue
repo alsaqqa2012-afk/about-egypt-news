@@ -125,20 +125,7 @@ watchEffect(() => {
 })
 
 // ✅ تنسيق التاريخ بتوقيت Africa/Cairo (+02:00)
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString)
-  // ⚠️ إصلاح: 'ar-SA' يستخدم افتراضياً التقويم الهجري (Umm al-Qura) في بعض المتصفحات/البيئات
-  // ما يخلي التاريخ يظهر بالسنة الهجرية بدل الميلادية. نستخدم 'ar-EG' + calendar: 'gregory' صراحة للتأكد.
-  return new Intl.DateTimeFormat('ar-EG', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Africa/Cairo',
-    calendar: 'gregory',
-  }).format(date)
-}
+const { formatDate } = useFormatDate()
 
 // ⚠️ إصلاح: مصر أعادت العمل بالتوقيت الصيفي (DST) بدءاً من 2023 (عادة أبريل–أكتوبر)
 // فالفارق الفعلي عن UTC يصير +03:00 وليس +02:00 طوال السنة. تثبيت "+02:00" كان
