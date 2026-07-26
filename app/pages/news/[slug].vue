@@ -2,7 +2,6 @@
 // ============================================================
 // صفحة تفاصيل المقال - Blog Post Detail (SEO Optimized)
 // المسار الديناميكي: /news/[slug]
-// API: يُقرأ من runtimeConfig (env vars) بدل الـ hardcoding
 // ============================================================
 
 interface Tag {
@@ -90,6 +89,8 @@ interface BlogPost {
   previous_post: RelatedPost | null
   created_at: string
   updated_at: string
+  // ✅ حقل من لوحة التحكم: هل يُظهر تاريخ التعديل؟
+  show_modified_date?: boolean
 }
 
 // --- Route ---
@@ -103,12 +104,9 @@ const error = ref<string | null>(null)
 const liked = ref(false)
 
 // --- Config ---
-// ملاحظة: apiBase في nuxt.config.ts مسجّل بالفعل بـ /api في آخره
-// (مثال: https://89.167.10.171.nip.io/api) فلا نكرره هنا
 const config = useRuntimeConfig()
-const API_BASE = (config.public.apiBase as string).replace(/\/$/, '') // ينتهي بـ /api
+const API_BASE = (config.public.apiBase as string).replace(/\/$/, '')
 const SITE_URL = config.public.siteUrl as string
-// نستخدمه فقط لبناء روابط الصور (بدون /api) لأن الصور تُخدم من الجذر
 const MEDIA_BASE = API_BASE.replace(/\/api\/?$/, '')
 
 // --- Fetch Post ---
@@ -122,81 +120,113 @@ const { data, pending, error: fetchError } = await useFetch<BlogPost>(
 
 watchEffect(() => {
   loading.value = pending.value
-  if (data.value) {
-    post.value = data.value
-  }
-  if (fetchError.value) {
-    error.value = 'حدث خطأ أثناء جلب بيانات المقال'
-  }
+  if (data.value) post.value = data.value
+  if (fetchError.value) error.value = 'حدث خطأ أثناء جلب بيانات المقال'
 })
 
-// --- Format Date ---
+// ✅ تنسيق التاريخ بتوقيت Africa/Cairo (+02:00)
 const formatDate = (dateString: string): string => {
   const date = new Date(dateString)
-  return new Intl.DateTimeFormat('ar-SA', {
+  // ⚠️ إصلاح: 'ar-SA' يستخدم افتراضياً التقويم الهجري (Umm al-Qura) في بعض المتصفحات/البيئات
+  // ما يخلي التاريخ يظهر بالسنة الهجرية بدل الميلادية. نستخدم 'ar-EG' + calendar: 'gregory' صراحة للتأكد.
+  return new Intl.DateTimeFormat('ar-EG', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Africa/Cairo',
+    calendar: 'gregory',
   }).format(date)
 }
 
-// --- Strip HTML for excerpt ---
+// ⚠️ إصلاح: مصر أعادت العمل بالتوقيت الصيفي (DST) بدءاً من 2023 (عادة أبريل–أكتوبر)
+// فالفارق الفعلي عن UTC يصير +03:00 وليس +02:00 طوال السنة. تثبيت "+02:00" كان
+// يخلي قيمة الـ ISO غير مطابقة فعليًا للوقت المعروض في تلك الشهور، مما يكسر تطابق
+// (الوقت الظاهر / datetime / datePublished / article:published_time / dateModified / article:modified_time).
+// هنا نحسب الفارق الحقيقي عن UTC لنفس التاريخ ديناميكيًا بدل تثبيته.
+const toISOCairo = (dateString: string): string => {
+  const date = new Date(dateString)
+
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, timeZone: 'Africa/Cairo',
+  }).formatToParts(date)
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '00'
+
+  // نحسب الفارق الفعلي (+02:00 أو +03:00 وقت التوقيت الصيفي) لنفس اللحظة الزمنية
+  const offsetParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Africa/Cairo',
+    timeZoneName: 'longOffset',
+  }).formatToParts(date)
+  const rawOffset = offsetParts.find(p => p.type === 'timeZoneName')?.value ?? 'GMT+02:00'
+  const offset = rawOffset.replace('GMT', '') || '+00:00'
+
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}${offset}`
+}
+
 const stripHtml = (html: string): string => {
   if (!html) return ''
   return html.replace(/<[^>]*>/g, '').substring(0, 160) + '...'
 }
 
-// --- Strip HTML بالكامل بدون قص، تُستخدم لحساب عدد الكلمات (wordCount) ---
 const stripHtmlFull = (html: string): string => {
   if (!html) return ''
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-// --- عدد كلمات المحتوى (تقديري) لاستخدامه في wordCount بالـ JSON-LD ---
+// ✅ عدد الكلمات - يُحسب آلياً من محتوى المقال
 const wordCount = computed(() => {
   if (!post.value?.content_ar) return 0
   const text = stripHtmlFull(post.value.content_ar)
   return text ? text.split(' ').filter(Boolean).length : 0
 })
 
-// --- Helper: تحويل مسار نسبي إلى رابط مطلق ---
+// ✅ وقت القراءة يُحسب آلياً من عدد الكلمات الفعلي (متوسط سرعة قراءة بالعربية ~200 كلمة/دقيقة)
+// بدل الاعتماد فقط على حقل reading_time القادم من الباك إند، لضمان دقته دائمًا.
+const READING_SPEED_WPM = 200
+const readingTime = computed(() => {
+  if (!wordCount.value) return post.value?.reading_time || 1
+  return Math.max(1, Math.ceil(wordCount.value / READING_SPEED_WPM))
+})
+
 const absoluteUrl = (path: string | null | undefined): string => {
   if (!path) return ''
   return path.startsWith('http') ? path : `${MEDIA_BASE}${path}`
 }
 
-// --- هل المقال اتحدّث فعلياً بعد النشر؟ ---
-// نقارن updated_at بـ published_at (أو created_at كبديل)
-// بفارق أكبر من دقيقة، عشان الفروقات الطفيفة الناتجة عن عملية الحفظ الأولى
-// (مثلاً auto_now_add و auto_now بنفس اللحظة تقريباً) ما تعتبر "تحديث"
-const isUpdated = computed(() => {
+// ✅ تحديد نوع الصورة ديناميكياً بدل تثبيت image/jpeg
+const getImageMimeType = (url: string): string => {
+  if (url.includes('.png'))  return 'image/png'
+  if (url.includes('.webp')) return 'image/webp'
+  if (url.includes('.gif'))  return 'image/gif'
+  return 'image/jpeg'
+}
+
+// ✅ هل يُظهر تاريخ التعديل؟
+// الشرط المزدوج: المحرر فعّل الخيار + فارق زمني حقيقي أكثر من دقيقة
+const showModifiedDate = computed(() => {
   if (!post.value) return false
   const baseDate = post.value.published_at || post.value.created_at
   if (!post.value.updated_at || !baseDate) return false
-
-  const updatedTime = new Date(post.value.updated_at).getTime()
-  const baseTime = new Date(baseDate).getTime()
-
-  return updatedTime - baseTime > 60 * 1000 // فرق أكثر من دقيقة
+  const diff = new Date(post.value.updated_at).getTime() - new Date(baseDate).getTime()
+  return post.value.show_modified_date === true && diff > 60 * 1000
 })
 
 // --- Share URLs ---
 const canonicalUrl = computed(() => `${SITE_URL}/news/${slug}`)
 
 const shareUrl = computed(() => {
-  if (typeof window !== 'undefined') {
-    return window.location.href
-  }
+  if (typeof window !== 'undefined') return window.location.href
   return canonicalUrl.value
 })
 
-// --- Breadcrumb data (نستخدمها بالـ HTML وبالـ JSON-LD مع بعض لضمان التطابق) ---
+// ✅ Breadcrumb: الرئيسية ← الأخبار ← الفئة ← عنوان المقال
 const breadcrumbItems = computed(() => {
   const items = [
     { name: 'الرئيسية', url: SITE_URL, path: '/' },
-    { name: 'المقالات', url: `${SITE_URL}/blog`, path: '/blog' },
+    { name: 'الأخبار', url: `${SITE_URL}/news`, path: '/news' },
   ]
   if (post.value?.category) {
     items.push({
@@ -235,6 +265,58 @@ const copyLink = async () => {
   }
 }
 
+// --- Comment Form ---
+// ✅ إصلاح: الفورم في القالب كان بدون أي منطق إرسال (@submit / v-model) فكان يعمل
+// submit افتراضي (إعادة تحميل الصفحة) بدون إرسال أي بيانات فعلية.
+const commentForm = reactive({
+  author_name: '',
+  author_email: '',
+  content: '',
+})
+const submittingComment = ref(false)
+const commentError = ref<string | null>(null)
+const commentSuccess = ref(false)
+
+const submitComment = async () => {
+  commentError.value = null
+  commentSuccess.value = false
+
+  if (!commentForm.author_name.trim() || !commentForm.content.trim()) {
+    commentError.value = 'الرجاء إدخال الاسم والتعليق'
+    return
+  }
+
+  submittingComment.value = true
+  try {
+    // ⚠️ تأكد من مطابقة هذا المسار لمسار الـ API الفعلي لديك لإضافة تعليق
+    const newComment = await $fetch<Comment>(
+      `${API_BASE}/blog/blog-posts/${encodeURIComponent(slug)}/comments/`,
+      {
+        method: 'POST',
+        body: {
+          author_name: commentForm.author_name,
+          author_email: commentForm.author_email,
+          content: commentForm.content,
+        },
+      }
+    )
+
+    if (post.value) {
+      post.value.comments.unshift(newComment)
+      post.value.comments_count += 1
+    }
+
+    commentForm.author_name = ''
+    commentForm.author_email = ''
+    commentForm.content = ''
+    commentSuccess.value = true
+  } catch {
+    commentError.value = 'تعذر إرسال التعليق، حاول مرة أخرى'
+  } finally {
+    submittingComment.value = false
+  }
+}
+
 // --- SEO: Meta Tags ---
 useHead(() => {
   if (!post.value) return {}
@@ -243,42 +325,49 @@ useHead(() => {
   const description = p.meta_description_ar || stripHtml(p.excerpt_ar)
   const image = absoluteUrl(p.og_image || p.featured_image) || `${SITE_URL}/default-og-image.jpg`
   const keywords = p.meta_keywords || p.tags.map(t => t.name_ar).join(', ')
-  const publishedTime = p.published_at || p.created_at
-  const modifiedTime = p.updated_at || publishedTime
+
+  // ✅ التواريخ بتوقيت القاهرة +02:00
+  const publishedTime = toISOCairo(p.published_at || p.created_at)
+  const modifiedTime  = showModifiedDate.value
+    ? toISOCairo(p.updated_at)
+    : publishedTime
 
   return {
-    htmlAttrs: {
-      lang: 'ar',
-      dir: 'rtl',
-    },
+    htmlAttrs: { lang: 'ar', dir: 'rtl' },
     title: p.meta_title_ar || p.title_ar,
     meta: [
       { name: 'description', content: description },
-      { name: 'keywords', content: keywords },
-      { name: 'author', content: p.author_info.display_name_ar },
+      { name: 'author',      content: p.author_info.display_name_ar },
 
-      // Open Graph
-      { property: 'og:type', content: 'article' },
-      { property: 'og:title', content: p.meta_title_ar || p.title_ar },
+      // Open Graph - Basic
+      { property: 'og:type',        content: 'article' },
+      { property: 'og:title',       content: p.meta_title_ar || p.title_ar },
       { property: 'og:description', content: description },
-      { property: 'og:image', content: image },
-      { property: 'og:url', content: canonicalUrl.value },
-      { property: 'og:site_name', content: 'عن مصر' },
-      { property: 'og:locale', content: 'ar_AR' },
+      { property: 'og:url',         content: canonicalUrl.value },
+      { property: 'og:site_name',   content: 'عن مصر' },
+      { property: 'og:locale',      content: 'ar_EG' },
 
-      // Article specific OG tags
+      // ✅ Open Graph - Image (كاملة مع الأبعاد والنوع والـ alt)
+      { property: 'og:image',        content: image },
+      { property: 'og:image:width',  content: '1200' },
+      { property: 'og:image:height', content: '630' },
+      { property: 'og:image:type',   content: getImageMimeType(image) },
+      { property: 'og:image:alt',    content: p.featured_image_alt || p.title_ar },
+
+      // Open Graph - Article
       { property: 'article:published_time', content: publishedTime },
-      { property: 'article:modified_time', content: modifiedTime },
-      { property: 'article:author', content: p.author_info.display_name_ar },
+      { property: 'article:modified_time',  content: modifiedTime },
+      { property: 'article:author',         content: p.author_info.display_name_ar },
       ...(p.tags.length
         ? p.tags.map(tag => ({ property: 'article:tag', content: tag.name_ar }))
         : []),
 
       // Twitter Card
-      { name: 'twitter:card', content: 'summary_large_image' },
-      { name: 'twitter:title', content: p.meta_title_ar || p.title_ar },
+      { name: 'twitter:card',        content: 'summary_large_image' },
+      { name: 'twitter:title',       content: p.meta_title_ar || p.title_ar },
       { name: 'twitter:description', content: description },
-      { name: 'twitter:image', content: image },
+      { name: 'twitter:image',       content: image },
+      { name: 'twitter:image:alt',   content: p.featured_image_alt || p.title_ar },
 
       // Robots
       {
@@ -289,11 +378,6 @@ useHead(() => {
     link: [
       { rel: 'canonical', href: canonicalUrl.value },
     ],
-    // JSON-LD Structured Data
-    // ملاحظة SEO: استخدمنا NewsArticle بدل BlogPosting لأن المحتوى إخباري
-    // (يعطي أفضلية للظهور في Google News / Top Stories)، مع إضافة
-    // wordCount و timeRequired وصورة موسّعة (width/height/caption) وصورة الكاتب،
-    // بنفس نمط المثال المرجعي.
     script: [
       {
         type: 'application/ld+json',
@@ -301,13 +385,14 @@ useHead(() => {
           '@context': 'https://schema.org',
           '@type': 'NewsArticle',
           '@id': `${canonicalUrl.value}#article`,
+          url: canonicalUrl.value,
           mainEntityOfPage: {
             '@type': 'WebPage',
             '@id': canonicalUrl.value,
           },
           headline: p.title_ar,
           description: description,
-          inLanguage: 'ar',
+          inLanguage: 'ar-EG',
           image: {
             '@type': 'ImageObject',
             url: image,
@@ -316,49 +401,50 @@ useHead(() => {
             caption: p.featured_image_alt || p.title_ar,
           },
           wordCount: wordCount.value,
-          timeRequired: `PT${p.reading_time}M`,
+          timeRequired: `PT${readingTime.value}M`,
           datePublished: publishedTime,
           dateModified: modifiedTime,
           author: {
             '@type': 'Person',
+            '@id': p.author_info.slug
+              ? `${SITE_URL}/author/${p.author_info.slug}#person`
+              : undefined,
             name: p.author_info.display_name_ar,
-            ...(p.author_info.avatar
-              ? { image: absoluteUrl(p.author_info.avatar) }
-              : {}),
             ...(p.author_info.slug
               ? { url: `${SITE_URL}/author/${p.author_info.slug}` }
+              : {}),
+            ...(p.author_info.avatar
+              ? {
+                  image: {
+                    '@type': 'ImageObject',
+                    url: absoluteUrl(p.author_info.avatar),
+                    width: 400,
+                    height: 400,
+                  },
+                }
               : {}),
           },
           publisher: {
             '@type': 'NewsMediaOrganization',
             '@id': `${SITE_URL}/#organization`,
             name: 'عن مصر',
+            url: SITE_URL,
             logo: {
               '@type': 'ImageObject',
               url: `${SITE_URL}/logo.png`,
+              width: 600,
+              height: 60,
             },
           },
           keywords: keywords || undefined,
           ...(p.category ? { articleSection: p.category.name_ar } : {}),
-          interactionStatistic: [
-            {
-              '@type': 'InteractionCounter',
-              interactionType: 'https://schema.org/ReadAction',
-              userInteractionCount: p.views_count,
-            },
-            {
-              '@type': 'InteractionCounter',
-              interactionType: 'https://schema.org/LikeAction',
-              userInteractionCount: p.likes_count,
-            },
-          ],
         }),
       },
     ],
   }
 })
 
-// --- Breadcrumb JSON-LD (مبني من نفس breadcrumbItems المستخدمة بالـ HTML لضمان التطابق) ---
+// ✅ Breadcrumb JSON-LD - مبني من نفس breadcrumbItems لضمان التطابق مع HTML
 useHead(() => {
   if (!post.value) return {}
   return {
@@ -398,27 +484,24 @@ useHead(() => {
     </div>
 
     <!-- Error State -->
-    <div
-      v-else-if="error || !post"
-      class="max-w-5xl mx-auto px-4 py-16 text-center"
-    >
+    <div v-else-if="error || !post" class="max-w-5xl mx-auto px-4 py-16 text-center">
       <div class="bg-red-50 border border-red-200 rounded-xl p-8 max-w-md mx-auto">
         <svg class="w-12 h-12 text-red-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
         </svg>
         <p class="text-red-700 font-medium mb-4">{{ error || 'المقال غير موجود' }}</p>
-        <NuxtLink to="/blog" class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-block">
-          العودة للمقالات
+        <NuxtLink to="/news" class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors inline-block">
+          العودة للأخبار
         </NuxtLink>
       </div>
     </div>
 
     <!-- Post Content -->
     <template v-else>
-      <!-- Hero / Featured Image -->
       <div class="relative bg-surface">
         <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4">
-          <!-- Breadcrumb: HTML حقيقي + microdata (itemscope/itemprop) بجانب JSON-LD -->
+
+          <!-- Breadcrumb -->
           <nav
             class="flex items-center gap-2 text-sm text-muted mb-6 flex-wrap"
             aria-label="Breadcrumb"
@@ -432,7 +515,6 @@ useHead(() => {
                 itemtype="https://schema.org/ListItem"
                 class="flex items-center gap-2"
               >
-                <!-- آخر عنصر (المقال الحالي) بدون رابط، الباقي روابط فعلية -->
                 <span v-if="index === breadcrumbItems.length - 1" itemprop="name" class="text-body truncate max-w-[200px]">
                   {{ item.name }}
                 </span>
@@ -446,7 +528,6 @@ useHead(() => {
                 </NuxtLink>
                 <meta itemprop="position" :content="String(index + 1)" />
               </span>
-
               <svg
                 v-if="index < breadcrumbItems.length - 1"
                 class="w-4 h-4 rtl:rotate-180"
@@ -469,15 +550,11 @@ useHead(() => {
             </span>
           </div>
 
-          <!-- Title: h1 وحيد في الصفحة -->
           <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold text-primary-dark leading-tight mb-4">
             {{ post.title_ar }}
           </h1>
 
-          <!-- Excerpt -->
-          <p class="text-lg text-muted mb-6 leading-relaxed">
-            {{ post.excerpt_ar }}
-          </p>
+          <p class="text-lg text-muted mb-6 leading-relaxed">{{ post.excerpt_ar }}</p>
 
           <!-- Meta Bar -->
           <div class="flex flex-wrap items-center gap-4 text-sm text-muted pb-6 border-b border-gray-200">
@@ -487,30 +564,34 @@ useHead(() => {
               </svg>
               <span class="font-medium text-body">{{ post.author_info.display_name_ar }}</span>
             </div>
+
+            <!-- ✅ datetime بتوقيت القاهرة +02:00 -->
             <div class="flex items-center gap-2">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
               </svg>
-              <time :datetime="post.published_at || post.created_at">
+              <time :datetime="toISOCairo(post.published_at || post.created_at)">
                 نُشر بتاريخ {{ formatDate(post.published_at || post.created_at) }}
               </time>
             </div>
 
-            <!-- يظهر فقط لو المقال اتحدّث فعلياً بعد النشر بفارق حقيقي -->
-            <div v-if="isUpdated" class="flex items-center gap-2 text-primary-orange">
+            <!-- ✅ تاريخ التعديل: يظهر فقط إذا فعّله المحرر من لوحة التحكم -->
+            <div v-if="showModifiedDate" class="flex items-center gap-2 text-primary-orange">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
               </svg>
-              <time :datetime="post.updated_at">
+              <time :datetime="toISOCairo(post.updated_at)">
                 آخر تحديث {{ formatDate(post.updated_at) }}
               </time>
             </div>
+
             <div class="flex items-center gap-2">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
               </svg>
-              <span>{{ post.reading_time }} دقيقة قراءة</span>
+              <span>{{ readingTime }} دقيقة قراءة</span>
             </div>
+
             <div class="flex items-center gap-2">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -539,9 +620,9 @@ useHead(() => {
       <!-- Main Content + Sidebar -->
       <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
           <!-- Article Content -->
           <div class="lg:col-span-2">
-            <!-- Article Body -->
             <article class="bg-surface rounded-xl shadow-soft border border-gray-100 p-6 md:p-8 mb-8">
               <div
                 class="prose prose-lg max-w-none prose-headings:text-primary-dark prose-headings:font-bold prose-p:text-body prose-p:leading-relaxed prose-a:text-primary-orange prose-a:no-underline hover:prose-a:underline prose-ul:list-disc prose-ol:list-decimal prose-li:text-body"
@@ -549,8 +630,7 @@ useHead(() => {
               />
             </article>
 
-            <!-- بطاقة الكاتب: انتقلت من الـ Sidebar لتكون تحت المقال مباشرة -->
-            <!-- سبب النقل: تقوية الإشارة الدلالية (E-E-A-T) بربط الكاتب بالمحتوى مباشرة -->
+            <!-- بطاقة الكاتب -->
             <div class="bg-surface rounded-xl shadow-soft border border-gray-100 p-6 mb-8">
               <div class="flex flex-col sm:flex-row items-start gap-4">
                 <div class="w-16 h-16 rounded-full overflow-hidden bg-orange-100 flex-shrink-0">
@@ -566,7 +646,6 @@ useHead(() => {
                     {{ post.author_info.display_name_ar.charAt(0) }}
                   </div>
                 </div>
-
                 <div class="flex-1">
                   <div class="flex flex-wrap items-center gap-2">
                     <h3 class="text-lg font-bold text-primary-dark">{{ post.author_info.display_name_ar }}</h3>
@@ -577,14 +656,9 @@ useHead(() => {
                       {{ post.author_info.title_ar }}
                     </span>
                   </div>
-
-                  <p
-                    v-if="post.author_info.bio_ar"
-                    class="mt-2 text-sm text-muted leading-relaxed"
-                  >
+                  <p v-if="post.author_info.bio_ar" class="mt-2 text-sm text-muted leading-relaxed">
                     {{ post.author_info.bio_ar }}
                   </p>
-
                   <div class="flex flex-wrap items-center gap-4 mt-3">
                     <div class="flex items-center gap-3">
                       <a
@@ -595,9 +669,7 @@ useHead(() => {
                         class="w-8 h-8 rounded-full bg-gray-100 hover:bg-sky-500 hover:text-white text-muted flex items-center justify-center transition-all duration-200"
                         title="تويتر"
                       >
-                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-                        </svg>
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
                       </a>
                       <a
                         v-if="post.author_info.linkedin_url"
@@ -607,9 +679,7 @@ useHead(() => {
                         class="w-8 h-8 rounded-full bg-gray-100 hover:bg-blue-600 hover:text-white text-muted flex items-center justify-center transition-all duration-200"
                         title="لينكدإن"
                       >
-                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
-                        </svg>
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
                       </a>
                       <a
                         v-if="post.author_info.email"
@@ -617,12 +687,9 @@ useHead(() => {
                         class="w-8 h-8 rounded-full bg-gray-100 hover:bg-primary-orange hover:text-white text-muted flex items-center justify-center transition-all duration-200"
                         title="البريد الإلكتروني"
                       >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                        </svg>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                       </a>
                     </div>
-
                     <NuxtLink
                       v-if="post.author_info.slug"
                       :to="`/author/${post.author_info.slug}`"
@@ -632,7 +699,6 @@ useHead(() => {
                     </NuxtLink>
                   </div>
                 </div>
-
                 <div class="hidden sm:flex flex-col items-center gap-1 text-center border-r border-gray-100 pr-4 flex-shrink-0">
                   <span class="text-lg font-bold text-primary-dark">{{ post.author_info.posts_count || 0 }}</span>
                   <span class="text-xs text-muted">مقال</span>
@@ -648,7 +714,7 @@ useHead(() => {
                   v-for="tag in post.tags"
                   :key="tag.id"
                   :to="`/tag/${tag.slug}`"
-                  class="px-4 py-2 bg-orange-50 text-primary-orange rounded-lg border border-orange-100 hover:bg-orange-100 hover:text-primary-orange transition-colors text-sm font-medium"
+                  class="px-4 py-2 bg-orange-50 text-primary-orange rounded-lg border border-orange-100 hover:bg-orange-100 transition-colors text-sm font-medium"
                 >
                   {{ tag.name_ar }}
                 </NuxtLink>
@@ -661,32 +727,20 @@ useHead(() => {
                 <div>
                   <h3 class="text-lg font-bold text-primary-dark mb-2">شارك المقال</h3>
                   <div class="flex gap-2">
-                    <button
-                      @click="shareOnTwitter"
-                      class="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors"
-                    >
+                    <button @click="shareOnTwitter" class="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors">
                       <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
                       <span class="hidden sm:inline">تويتر</span>
                     </button>
-                    <button
-                      @click="shareOnFacebook"
-                      class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                    >
+                    <button @click="shareOnFacebook" class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                       <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
                       <span class="hidden sm:inline">فيسبوك</span>
                     </button>
-                    <button
-                      @click="copyLink"
-                      class="flex items-center gap-2 px-4 py-2 bg-gray-100 text-body rounded-lg hover:bg-gray-200 transition-colors"
-                    >
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-                      </svg>
+                    <button @click="copyLink" class="flex items-center gap-2 px-4 py-2 bg-gray-100 text-body rounded-lg hover:bg-gray-200 transition-colors">
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                       <span class="hidden sm:inline">نسخ الرابط</span>
                     </button>
                   </div>
                 </div>
-
                 <div class="flex items-center gap-3">
                   <button
                     @click="liked = !liked"
@@ -703,23 +757,20 @@ useHead(() => {
             </div>
 
             <!-- Navigation: Previous / Next -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div v-if="post.previous_post || post.next_post" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
               <NuxtLink
                 v-if="post.previous_post"
                 :to="`/news/${post.previous_post.slug}`"
                 class="group bg-surface rounded-xl shadow-soft border border-gray-100 p-5 hover:shadow-lg transition-all hover:-translate-y-0.5"
               >
                 <div class="flex items-center gap-2 text-sm text-muted mb-2">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-                  </svg>
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                   <span>المقال السابق</span>
                 </div>
                 <h4 class="font-bold text-primary-dark group-hover:text-primary-orange transition-colors line-clamp-2">
                   {{ post.previous_post.title_ar }}
                 </h4>
               </NuxtLink>
-
               <NuxtLink
                 v-if="post.next_post"
                 :to="`/news/${post.next_post.slug}`"
@@ -727,9 +778,7 @@ useHead(() => {
               >
                 <div class="flex items-center justify-end gap-2 text-sm text-muted mb-2">
                   <span>المقال التالي</span>
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                  </svg>
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 </div>
                 <h4 class="font-bold text-primary-dark group-hover:text-primary-orange transition-colors line-clamp-2">
                   {{ post.next_post.title_ar }}
@@ -739,11 +788,7 @@ useHead(() => {
 
             <!-- Comments Section -->
             <div v-if="post.allow_comments" class="bg-surface rounded-xl shadow-soft border border-gray-100 p-6">
-              <h3 class="text-xl font-bold text-primary-dark mb-6">
-                التعليقات ({{ post.comments_count }})
-              </h3>
-
-              <!-- Comments List -->
+              <h3 class="text-xl font-bold text-primary-dark mb-6">التعليقات ({{ post.comments_count }})</h3>
               <div v-if="post.comments.length > 0" class="space-y-6 mb-8">
                 <div
                   v-for="comment in post.comments"
@@ -762,44 +807,30 @@ useHead(() => {
                   <p class="text-body leading-relaxed mr-3">{{ comment.content }}</p>
                 </div>
               </div>
-
-              <div v-else class="text-center py-8 text-muted mb-6">
-                لا توجد تعليقات بعد. كن أول من يعلق!
-              </div>
-
-              <!-- Comment Form -->
-              <form class="space-y-4">
+              <div v-else class="text-center py-8 text-muted mb-6">لا توجد تعليقات بعد. كن أول من يعلق!</div>
+              <form class="space-y-4" @submit.prevent="submitComment">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label class="block text-sm font-medium text-primary-dark mb-1">الاسم</label>
-                    <input
-                      type="text"
-                      class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-orange focus:border-primary-orange outline-none transition-colors bg-light-bg"
-                      placeholder="اسمك"
-                    />
+                    <input v-model="commentForm.author_name" type="text" required class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-orange focus:border-primary-orange outline-none transition-colors bg-light-bg" placeholder="اسمك"/>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-primary-dark mb-1">البريد الإلكتروني</label>
-                    <input
-                      type="email"
-                      class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-orange focus:border-primary-orange outline-none transition-colors bg-light-bg"
-                      placeholder="بريدك@example.com"
-                    />
+                    <input v-model="commentForm.author_email" type="email" class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-orange focus:border-primary-orange outline-none transition-colors bg-light-bg" placeholder="بريدك@example.com"/>
                   </div>
                 </div>
                 <div>
                   <label class="block text-sm font-medium text-primary-dark mb-1">التعليق</label>
-                  <textarea
-                    rows="4"
-                    class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-orange focus:border-primary-orange outline-none transition-colors resize-none bg-light-bg"
-                    placeholder="اكتب تعليقك هنا..."
-                  ></textarea>
+                  <textarea v-model="commentForm.content" rows="4" required class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-orange focus:border-primary-orange outline-none transition-colors resize-none bg-light-bg" placeholder="اكتب تعليقك هنا..."></textarea>
                 </div>
+                <p v-if="commentError" class="text-sm text-red-600">{{ commentError }}</p>
+                <p v-if="commentSuccess" class="text-sm text-green-600">تم إرسال تعليقك بنجاح!</p>
                 <button
                   type="submit"
-                  class="px-6 py-2 bg-primary-orange text-white font-bold rounded-lg hover:bg-orange-700 transition-colors"
+                  :disabled="submittingComment"
+                  class="px-6 py-2 bg-primary-orange text-white font-bold rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  إرسال التعليق
+                  {{ submittingComment ? 'جارِ الإرسال...' : 'إرسال التعليق' }}
                 </button>
               </form>
             </div>
@@ -807,7 +838,6 @@ useHead(() => {
 
           <!-- Sidebar -->
           <div class="lg:col-span-1 space-y-6">
-            <!-- WhatsApp & Telegram -->
             <div v-if="post.show_whatsapp_button || post.show_telegram_button" class="bg-surface rounded-xl shadow-soft border border-gray-100 p-6">
               <h3 class="text-lg font-bold text-primary-dark mb-4">تواصل معنا</h3>
               <div class="space-y-3">
@@ -855,9 +885,7 @@ useHead(() => {
                       class="w-full h-full object-cover group-hover:scale-110 transition-transform"
                     />
                     <div v-else class="w-full h-full flex items-center justify-center text-gray-300">
-                      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                      </svg>
+                      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                     </div>
                   </div>
                   <div>
@@ -865,10 +893,7 @@ useHead(() => {
                       {{ related.title_ar }}
                     </h4>
                     <div class="flex items-center gap-2 mt-1 text-xs text-muted">
-                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                      </svg>
+                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                       {{ related.views_count }}
                     </div>
                   </div>
@@ -876,6 +901,7 @@ useHead(() => {
               </div>
             </div>
           </div>
+
         </div>
       </div>
     </template>
