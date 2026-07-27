@@ -18,14 +18,14 @@
             <li><NuxtLink to="/about" class="hover:text-primary-orange transition">من نحن</NuxtLink></li>
             <li><NuxtLink to="/contact" class="hover:text-primary-orange transition">اتصل بنا</NuxtLink></li>
             <li><NuxtLink to="/privacy-policy" class="hover:text-primary-orange transition">سياسة الخصوصية</NuxtLink></li>
-            <li><NuxtLink to="/editorial-policy" class="hover:text-primary-orange transition">سياسة النشر</NuxtLink></li>
-            <li><NuxtLink to="/terms-and-conditions" class="hover:text-primary-orange transition">الشروط والأحكام</NuxtLink></li>
           </ul>
         </div>
 
         <!-- Dynamic Categories -->
         <div>
-          <h4 class="text-lg font-bold text-white mb-4 border-b border-primary-orange pb-2">الأقسام</h4>
+          <h4 class="text-lg font-bold !text-white mb-4 border-b border-primary-orange pb-2">
+  الأقسام
+</h4>
 
           <!-- Loading -->
           <div v-if="loading" class="space-y-2">
