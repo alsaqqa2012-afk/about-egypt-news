@@ -12,7 +12,9 @@
 
         <!-- Quick Links -->
         <div>
-          <h4 class="text-lg font-bold text-white mb-4 border-b border-primary-orange pb-2">روابط سريعة</h4>
+          <h4 class="text-lg font-bold !text-white mb-4 border-b border-primary-orange pb-2">
+  روابط سريعة
+</h4>
           <ul class="space-y-2 text-gray-200">
             <li><NuxtLink to="/" class="hover:text-primary-orange transition">الرئيسية</NuxtLink></li>
             <li><NuxtLink to="/about" class="hover:text-primary-orange transition">من نحن</NuxtLink></li>
@@ -62,7 +64,9 @@
 
         <!-- Social -->
         <div>
-          <h4 class="text-lg font-bold text-white mb-4 border-b border-primary-orange pb-2">تابعنا</h4>
+          <h4 class="text-lg font-bold !text-white mb-4 border-b border-primary-orange pb-2">
+  تابعنا
+</h4>
           <div class="flex gap-3">
             <a href="#" class="social-btn" aria-label="Facebook"><Icon name="mdi:facebook" class="w-5 h-5" /></a>
             <a href="#" class="social-btn" aria-label="Twitter"><Icon name="mdi:twitter" class="w-5 h-5" /></a>
