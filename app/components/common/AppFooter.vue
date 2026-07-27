@@ -18,6 +18,8 @@
             <li><NuxtLink to="/about" class="hover:text-primary-orange transition">من نحن</NuxtLink></li>
             <li><NuxtLink to="/contact" class="hover:text-primary-orange transition">اتصل بنا</NuxtLink></li>
             <li><NuxtLink to="/privacy-policy" class="hover:text-primary-orange transition">سياسة الخصوصية</NuxtLink></li>
+            <li><NuxtLink to="/editorial-policy" class="hover:text-primary-orange transition">سياسة النشر</NuxtLink></li>
+            <li><NuxtLink to="/terms-and-conditions" class="hover:text-primary-orange transition">الشروط والأحكام</NuxtLink></li>
           </ul>
         </div>
 
@@ -33,20 +35,20 @@
           <!-- Categories List -->
           <ul v-else-if="categories.length > 0" class="space-y-2 text-gray-200">
             <li v-for="cat in displayedCategories" :key="cat.id">
-              <NuxtLink 
-                :to="`/category/${cat.slug}`" 
+              <NuxtLink
+                :to="`/category/${cat.slug}`"
                 class="hover:text-primary-orange transition flex items-center gap-2"
               >
-                <span 
-                  class="w-2 h-2 rounded-full flex-shrink-0" 
+                <span
+                  class="w-2 h-2 rounded-full flex-shrink-0"
                   :style="{ backgroundColor: cat.color || '#f97316' }"
                 />
                 {{ cat.name_ar }}
               </NuxtLink>
             </li>
             <li v-if="categories.length > maxCategories">
-              <NuxtLink 
-                to="/category" 
+              <NuxtLink
+                to="/category"
                 class="text-primary-orange hover:text-white transition text-sm font-medium"
               >
                 عرض كل الأقسام ({{ categories.length }})
@@ -58,7 +60,7 @@
           <p v-else class="text-gray-400 text-sm">لا توجد أقسام</p>
         </div>
 
-        <!-- Social (placeholder for now) -->
+        <!-- Social -->
         <div>
           <h4 class="text-lg font-bold mb-4 border-b border-primary-orange pb-2">تابعنا</h4>
           <div class="flex gap-3">
@@ -70,11 +72,19 @@
         </div>
       </div>
 
-      <div class="border-t border-gray-600 pt-6 text-center">
+      <!-- Bottom Bar -->
+      <div class="border-t border-gray-600 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
         <p class="text-sm text-gray-300">
           جميع الحقوق محفوظة © {{ currentYear }}
           <span class="text-primary-orange font-bold">عن مصر</span>
         </p>
+        <div class="flex items-center gap-4 text-xs text-gray-400">
+          <NuxtLink to="/privacy-policy" class="hover:text-primary-orange transition">سياسة الخصوصية</NuxtLink>
+          <span class="text-gray-600">|</span>
+          <NuxtLink to="/editorial-policy" class="hover:text-primary-orange transition">سياسة النشر</NuxtLink>
+          <span class="text-gray-600">|</span>
+          <NuxtLink to="/terms-and-conditions" class="hover:text-primary-orange transition">الشروط والأحكام</NuxtLink>
+        </div>
       </div>
     </div>
   </footer>
@@ -83,10 +93,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-// Use the shared composable
 const { categories, loading } = useCategories()
 
-// Show max 6 categories in footer
 const maxCategories = 6
 const displayedCategories = computed(() => categories.value.slice(0, maxCategories))
 
