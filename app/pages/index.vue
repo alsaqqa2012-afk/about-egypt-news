@@ -2,7 +2,8 @@
 // ============================================================
 // الصفحة الرئيسية - محسّنة بالكامل
 // ✅ SSR عبر useAsyncData
-// ✅ SEO كامل (OG + Twitter + JSON-LD + Canonical)
+// ✅ SEO كامل (OG + Twitter + JSON-LD موحّد بصيغة @graph + Canonical)
+// ✅ NewsArticle Schema لكل خبر من أحدث 5 أخبار
 // ✅ أحدث 5 أخبار في الأعلى
 // ✅ RTL صحيح + Accessibility + CLS Fix
 // ============================================================
@@ -61,7 +62,7 @@ interface Section {
 // --- Config ---
 const config = useRuntimeConfig()
 const API_BASE = config.public.apiBase || 'https://89.167.10.171.nip.io'
-const SITE_URL = config.public.siteUrl || 'https://about-egypt-news.vercel.app'
+const SITE_URL = (config.public.siteUrl || 'https://about-egypt-news.vercel.app').replace(/\/$/, '')
 
 // --- Fallback Data ---
 const fallbackCategories: Category[] = [
@@ -101,9 +102,9 @@ const getImageUrl = (url: string | null | undefined): string | null => {
 
 // ✅ تحديد نوع الصورة ديناميكياً لاستخدامه في og:image:type
 const getImageMimeType = (url: string): string => {
-  if (url.includes('.png'))  return 'image/png'
+  if (url.includes('.png')) return 'image/png'
   if (url.includes('.webp')) return 'image/webp'
-  if (url.includes('.gif'))  return 'image/gif'
+  if (url.includes('.gif')) return 'image/gif'
   return 'image/jpeg'
 }
 
@@ -115,6 +116,12 @@ const getPostDate = (post: BlogPost): string => {
   const date = post.published_at || post.created_at
   if (!date) return ''
   return formatDate(date)
+}
+
+// ✅ تاريخ ISO خام (بدون تنسيق) — مطلوب في datePublished/dateModified لسكيما NewsArticle
+const getIsoDate = (post: BlogPost): string | undefined => {
+  const date = post.published_at || post.created_at
+  return date ? new Date(date).toISOString() : undefined
 }
 
 const getAuthorName = (post: BlogPost): string => {
@@ -207,90 +214,183 @@ const apiAvailable = computed(() => pageData.value?.apiAvailable ?? true)
 
 // --- SEO ---
 const siteTitle = 'عن مصر - بوابتك للأخبار والخدمات'
-const siteDesc  = 'استكشف أحدث المقالات والأخبار المتنوعة عن مصر - سياسة، اقتصاد، ثقافة، ورياضة'
+
+// ✅ description ديناميكي: لو فيه أخبار، نبني ملخص من عناوين أحدث 3 أخبار بدل نص ثابت دايمًا
+const siteDesc = computed(() => {
+  const titles = latestPosts.value.slice(0, 3).map(p => p.title_ar).filter(Boolean)
+  if (titles.length > 0) {
+    return `أحدث الأخبار عن مصر: ${titles.join(' | ')}`.slice(0, 160)
+  }
+  return 'استكشف أحدث المقالات والأخبار المتنوعة عن مصر - سياسة، اقتصاد، ثقافة، ورياضة'
+})
 
 // ✅ صورة OG: أول خبر أو الافتراضية
-const ogImage = latestPosts.value[0]?.featured_image
-  ? getImageUrl(latestPosts.value[0].featured_image)
-  : `${SITE_URL}/og-default.jpg`
+const ogImage = computed(() =>
+  latestPosts.value[0]?.featured_image
+    ? getImageUrl(latestPosts.value[0].featured_image)
+    : `${SITE_URL}/og-default.jpg`
+)
 
 // ✅ alt للصورة: عنوان أول خبر أو اسم الموقع
-const ogImageAlt = latestPosts.value[0]?.title_ar || 'عن مصر - بوابتك للأخبار'
+const ogImageAlt = computed(() => latestPosts.value[0]?.title_ar || 'عن مصر - بوابتك للأخبار')
+
+// ============================================================
+// ✅ بناء JSON-LD موحّد بصيغة @graph
+// Organization ↔ WebSite ↔ CollectionPage ↔ ItemList(NewsArticle لكل خبر)
+// كل الكيانات مربوطة ببعض عبر @id بدل سكريبتات منفصلة معزولة
+// ============================================================
+const jsonLd = computed(() => {
+  const orgId = `${SITE_URL}/#organization`
+  const websiteId = `${SITE_URL}/#website`
+  const webpageId = `${SITE_URL}/#webpage`
+  const logoId = `${SITE_URL}/#logo`
+
+  const graph: Record<string, any>[] = [
+    {
+      '@type': 'NewsMediaOrganization',
+      '@id': orgId,
+      name: 'عن مصر',
+      url: SITE_URL,
+      description: 'منصة إخبارية مصرية تقدم أحدث الأخبار والتقارير والمعلومات والخدمات.',
+      logo: {
+        '@type': 'ImageObject',
+        '@id': logoId,
+        // ⚠️ ملاحظة مهمة: لازم يكون /logo.png موجود فعليًا وبأبعاد مربعة قريبة
+        // (مثلاً 512×512) وإلا Google Rich Results Test هيرفض النسبة 600×60 القديمة
+        url: `${SITE_URL}/logo.png`,
+        contentUrl: `${SITE_URL}/logo.png`,
+        width: 512,
+        height: 512,
+        caption: 'عن مصر',
+      },
+      image: { '@id': logoId },
+      // ⚠️ لو مفيش حسابات سوشيال ميديا فعلية، اترك المصفوفة فاضية أو احذف الحقل كليًا
+      // بدل ما تحطها فيها روابط وهمية
+      sameAs: [],
+    },
+    {
+      '@type': 'WebSite',
+      '@id': websiteId,
+      url: SITE_URL,
+      name: 'عن مصر',
+      description: siteDesc.value,
+      inLanguage: 'ar-EG',
+      publisher: { '@id': orgId },
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: {
+          '@type': 'EntryPoint',
+          urlTemplate: `${SITE_URL}/search?q={search_term_string}`,
+        },
+        'query-input': 'required name=search_term_string',
+      },
+    },
+    {
+      '@type': 'CollectionPage',
+      '@id': webpageId,
+      url: SITE_URL,
+      name: siteTitle,
+      description: siteDesc.value,
+      inLanguage: 'ar-EG',
+      isPartOf: { '@id': websiteId },
+      about: { '@id': orgId },
+      publisher: { '@id': orgId },
+      ...(ogImage.value ? { primaryImageOfPage: { '@type': 'ImageObject', url: ogImage.value } } : {}),
+    },
+  ]
+
+  // ✅ NewsArticle لكل خبر من أحدث 5 أخبار + ItemList تربطهم بالصفحة
+  if (latestPosts.value.length > 0) {
+    const articleIds: { '@id': string }[] = []
+
+    latestPosts.value.forEach((post) => {
+      const articleUrl = `${SITE_URL}/news/${post.slug}`
+      const articleId = `${articleUrl}#article`
+      const img = getImageUrl(post.featured_image)
+
+      graph.push({
+        '@type': 'NewsArticle',
+        '@id': articleId,
+        headline: post.title_ar,
+        description: stripHtml(post.excerpt_ar ?? ''),
+        url: articleUrl,
+        mainEntityOfPage: { '@id': articleUrl },
+        ...(img
+          ? {
+              image: {
+                '@type': 'ImageObject',
+                url: img,
+                width: 1200,
+                height: 630,
+              },
+            }
+          : {}),
+        author: {
+          '@type': 'Person',
+          name: getAuthorName(post),
+        },
+        publisher: { '@id': orgId },
+        ...(getIsoDate(post) ? { datePublished: getIsoDate(post), dateModified: getIsoDate(post) } : {}),
+        inLanguage: 'ar-EG',
+        ...(post.category ? { articleSection: post.category.name_ar } : {}),
+      })
+
+      articleIds.push({ '@id': articleId })
+    })
+
+    graph.push({
+      '@type': 'ItemList',
+      '@id': `${SITE_URL}/#latest-news`,
+      name: 'أحدث الأخبار',
+      itemListElement: articleIds.map((item, index) => ({
+        '@type': 'ListItem',
+        position: index + 1,
+        item: item['@id'],
+      })),
+    })
+  }
+
+  return {
+    '@context': 'https://schema.org',
+    '@graph': graph,
+  }
+})
 
 useHead({
   title: siteTitle,
   htmlAttrs: { lang: 'ar', dir: 'rtl' },
   link: [{ rel: 'canonical', href: SITE_URL }],
   meta: [
-    { name: 'description',  content: siteDesc },
-    { name: 'robots',       content: 'index, follow' },
+    { name: 'description', content: siteDesc },
+    { name: 'robots', content: 'index, follow' },
 
     // Open Graph - Basic
-    { property: 'og:type',        content: 'website' },
-    { property: 'og:title',       content: siteTitle },
+    { property: 'og:type', content: 'website' },
+    { property: 'og:title', content: siteTitle },
     { property: 'og:description', content: siteDesc },
-    { property: 'og:url',         content: SITE_URL },
-    { property: 'og:site_name',   content: 'عن مصر' },
-    { property: 'og:locale',      content: 'ar_EG' },
+    { property: 'og:url', content: SITE_URL },
+    { property: 'og:site_name', content: 'عن مصر' },
+    { property: 'og:locale', content: 'ar_EG' },
 
     // ✅ Open Graph - Image كاملة مع أبعاد
-    { property: 'og:image',        content: ogImage ?? '' },
-    { property: 'og:image:width',  content: '1200' },
+    { property: 'og:image', content: ogImage },
+    { property: 'og:image:width', content: '1200' },
     { property: 'og:image:height', content: '630' },
-    { property: 'og:image:type',   content: ogImage ? getImageMimeType(ogImage) : 'image/jpeg' },
-    { property: 'og:image:alt',    content: ogImageAlt },
+    { property: 'og:image:type', content: computed(() => (ogImage.value ? getImageMimeType(ogImage.value) : 'image/jpeg')) },
+    { property: 'og:image:alt', content: ogImageAlt },
 
     // Twitter Card
-    { name: 'twitter:card',        content: 'summary_large_image' },
-    { name: 'twitter:title',       content: siteTitle },
+    { name: 'twitter:card', content: 'summary_large_image' },
+    { name: 'twitter:title', content: siteTitle },
     { name: 'twitter:description', content: siteDesc },
-    { name: 'twitter:image',       content: ogImage ?? '' },
-    { name: 'twitter:image:alt',   content: ogImageAlt }, // ✅ مضاف
+    { name: 'twitter:image', content: ogImage },
+    { name: 'twitter:image:alt', content: ogImageAlt },
   ],
   script: [
-    // ✅ WebSite Schema
+    // ✅ سكريبت JSON-LD واحد موحّد بصيغة @graph بدل سكريبتين منفصلين
     {
       type: 'application/ld+json',
-      innerHTML: JSON.stringify({  // ✅ كان children، صحّحناه لـ innerHTML
-        '@context': 'https://schema.org',
-        '@type': 'WebSite',
-        '@id': `${SITE_URL}/#website`,
-        name: 'عن مصر',
-        url: SITE_URL,
-        description: siteDesc,
-        inLanguage: 'ar-EG', // ✅ كان 'ar' فقط
-        potentialAction: {
-          '@type': 'SearchAction',
-          target: {
-            '@type': 'EntryPoint',
-            urlTemplate: `${SITE_URL}/search?q={search_term_string}`,
-          },
-          'query-input': 'required name=search_term_string',
-        },
-      }),
-    },
-    // ✅ Organization Schema - مضافة من الصفر
-    {
-      type: 'application/ld+json',
-      innerHTML: JSON.stringify({
-        '@context': 'https://schema.org',
-        '@type': 'NewsMediaOrganization',
-        '@id': `${SITE_URL}/#organization`,
-        name: 'عن مصر',
-        url: SITE_URL,
-        logo: {
-          '@type': 'ImageObject',
-          url: `${SITE_URL}/logo.png`,
-          width: 600,
-          height: 60,
-        },
-        sameAs: [
-          // ✅ أضف روابط السوشيال ميديا هنا لو موجودة
-          // 'https://twitter.com/aboutegypt',
-          // 'https://facebook.com/aboutegypt',
-        ],
-        inLanguage: 'ar-EG',
-      }),
+      innerHTML: computed(() => JSON.stringify(jsonLd.value)),
     },
   ],
 })
