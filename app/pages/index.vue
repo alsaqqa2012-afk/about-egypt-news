@@ -3,7 +3,7 @@
 // الصفحة الرئيسية - محسّنة بالكامل
 // ✅ SSR عبر useAsyncData
 // ✅ SEO كامل (OG + Twitter + JSON-LD موحّد بصيغة @graph + Canonical)
-// ✅ NewsArticle Schema لكل خبر من أحدث 5 أخبار
+// ✅ سكيما NewsArticle بقت في صفحة الخبر الفردية بس (مش هنا) — قرار SEO
 // ✅ أحدث 5 أخبار في الأعلى
 // ✅ RTL صحيح + Accessibility + CLS Fix
 // ============================================================
@@ -39,7 +39,8 @@ interface BlogPost {
   category?: Category | null
   tags?: Tag[]
   author_name?: string
-  author_info?: { display_name_ar: string }
+  author_slug?: string | null
+  author_info?: { display_name_ar: string; slug?: string }
   published_at?: string | null
   created_at?: string
   views_count: number
@@ -118,15 +119,11 @@ const getPostDate = (post: BlogPost): string => {
   return formatDate(date)
 }
 
-// ✅ تاريخ ISO خام (بدون تنسيق) — مطلوب في datePublished/dateModified لسكيما NewsArticle
-const getIsoDate = (post: BlogPost): string | undefined => {
-  const date = post.published_at || post.created_at
-  return date ? new Date(date).toISOString() : undefined
-}
-
 const getAuthorName = (post: BlogPost): string => {
   return post.author_name || post.author_info?.display_name_ar || 'غير معروف'
 }
+// ℹ️ ملاحظة: دوال بناء NewsArticle (تاريخ ISO / رابط الكاتب) اتنقلت لصفحة
+// الخبر الفردية (/news/[slug].vue) لأن ده مكانها الصحيح في السكيما، مش هنا
 
 const stripHtml = (html: string, maxLength = 130): string => {
   if (!html) return ''
@@ -236,7 +233,7 @@ const ogImageAlt = computed(() => latestPosts.value[0]?.title_ar || 'عن مصر
 
 // ============================================================
 // ✅ بناء JSON-LD موحّد بصيغة @graph
-// Organization ↔ WebSite ↔ CollectionPage ↔ ItemList(NewsArticle لكل خبر)
+// Organization ↔ WebSite ↔ CollectionPage (بدون NewsArticle - مكانها صفحة الخبر الفردية)
 // كل الكيانات مربوطة ببعض عبر @id بدل سكريبتات منفصلة معزولة
 // ============================================================
 const jsonLd = computed(() => {
@@ -299,56 +296,10 @@ const jsonLd = computed(() => {
     },
   ]
 
-  // ✅ NewsArticle لكل خبر من أحدث 5 أخبار + ItemList تربطهم بالصفحة
-  if (latestPosts.value.length > 0) {
-    const articleIds: { '@id': string }[] = []
-
-    latestPosts.value.forEach((post) => {
-      const articleUrl = `${SITE_URL}/news/${post.slug}`
-      const articleId = `${articleUrl}#article`
-      const img = getImageUrl(post.featured_image)
-
-      graph.push({
-        '@type': 'NewsArticle',
-        '@id': articleId,
-        headline: post.title_ar,
-        description: stripHtml(post.excerpt_ar ?? ''),
-        url: articleUrl,
-        mainEntityOfPage: { '@id': articleUrl },
-        ...(img
-          ? {
-              image: {
-                '@type': 'ImageObject',
-                url: img,
-                width: 1200,
-                height: 630,
-              },
-            }
-          : {}),
-        author: {
-          '@type': 'Person',
-          name: getAuthorName(post),
-        },
-        publisher: { '@id': orgId },
-        ...(getIsoDate(post) ? { datePublished: getIsoDate(post), dateModified: getIsoDate(post) } : {}),
-        inLanguage: 'ar-EG',
-        ...(post.category ? { articleSection: post.category.name_ar } : {}),
-      })
-
-      articleIds.push({ '@id': articleId })
-    })
-
-    graph.push({
-      '@type': 'ItemList',
-      '@id': `${SITE_URL}/#latest-news`,
-      name: 'أحدث الأخبار',
-      itemListElement: articleIds.map((item, index) => ({
-        '@type': 'ListItem',
-        position: index + 1,
-        item: item['@id'],
-      })),
-    })
-  }
+  // ℹ️ ملاحظة SEO: بقرار من المختص، سكيما NewsArticle لكل خبر اتشالت من هنا
+  // (الصفحة الرئيسية). كل مقال المفروض يكون له NewsArticle schema خاصة بيه
+  // في صفحته الفردية (/news/[slug].vue) بدل تكرارها هنا - عشان السكيما تعبّر
+  // عن المحتوى الأساسي لكل صفحة على حدة، وتفادي أي تكرار غير ضروري (thin/duplicate markup)
 
   return {
     '@context': 'https://schema.org',
