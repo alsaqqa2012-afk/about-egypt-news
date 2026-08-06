@@ -43,6 +43,7 @@ interface BlogPost {
   author_info?: { display_name_ar: string; slug?: string }
   published_at?: string | null
   created_at?: string
+  updated_at?: string
   views_count: number
   reading_time?: number
 }
@@ -119,6 +120,13 @@ const getPostDate = (post: BlogPost): string => {
   return formatDate(date)
 }
 
+// ✅ تاريخ التحديث - يُستخدم في بلوك "مقالات محدّثة اليوم" لعرض تاريخ
+// النشر الأصلي وتاريخ آخر تحديث معًا، بدل الاعتماد على تاريخ واحد بس
+const getUpdatedDate = (post: BlogPost): string => {
+  if (!post.updated_at) return ''
+  return formatDate(post.updated_at)
+}
+
 const getAuthorName = (post: BlogPost): string => {
   return post.author_name || post.author_info?.display_name_ar || 'غير معروف'
 }
@@ -154,6 +162,7 @@ const { data: pageData } = await useAsyncData('home-page', async () => {
   let apiAvailable = true
   let categories: Category[] = []
   let latestPosts: BlogPost[] = []
+  let updatedTodayPosts: BlogPost[] = []
   const sections: Section[] = []
 
   // 1. Fetch Categories
@@ -182,7 +191,21 @@ const { data: pageData } = await useAsyncData('home-page', async () => {
     latestPosts = fallbackPosts
   }
 
-  // 3. Fetch Posts per Category
+  // 3. Fetch Posts Updated Today
+  // ✅ endpoint جديد من الباك اند: بيرجع بس المقالات اللي اتحدثت فعليًا
+  // اليوم (فرق حقيقي أكتر من دقيقة بين النشر والتحديث)، مش بس اتنشرت
+  try {
+    const updatedData = await fetchWithRetry<BlogPost[] | ApiResponse<BlogPost>>(
+      `${API_BASE}/blog/blog-posts/updated_today/?limit=8`
+    )
+    updatedTodayPosts = Array.isArray(updatedData)
+      ? updatedData
+      : (updatedData as ApiResponse<BlogPost>).results ?? []
+  } catch {
+    updatedTodayPosts = []
+  }
+
+  // 4. Fetch Posts per Category
   await Promise.all(
     categories.map(async (cat) => {
       try {
@@ -201,12 +224,13 @@ const { data: pageData } = await useAsyncData('home-page', async () => {
 
   sections.sort((a, b) => a.category.order - b.category.order)
 
-  return { categories, latestPosts, sections, apiAvailable }
+  return { categories, latestPosts, updatedTodayPosts, sections, apiAvailable }
 })
 
 // --- Computed ---
 const sections = computed(() => pageData.value?.sections ?? [])
 const latestPosts = computed(() => pageData.value?.latestPosts ?? [])
+const updatedTodayPosts = computed(() => pageData.value?.updatedTodayPosts ?? [])
 const apiAvailable = computed(() => pageData.value?.apiAvailable ?? true)
 
 // --- SEO ---
@@ -313,7 +337,7 @@ useHead({
   link: [{ rel: 'canonical', href: SITE_URL }],
   meta: [
     { name: 'description', content: siteDesc },
-    { name: 'robots', content: 'index, follow' },
+    { name: 'robots', content: 'index, follow, max-image-preview:large' },
 
     // Open Graph - Basic
     { property: 'og:type', content: 'website' },
@@ -481,6 +505,76 @@ useHead({
               </div>
             </NuxtLink>
           </div>
+        </div>
+      </section>
+
+      <!-- ===== مقالات محدّثة اليوم ===== -->
+      <!-- ✅ Google Discover بيهتم بالمحتوى المُحدَّث باستمرار (evergreen content)
+           قد اهتمامه بالمحتوى الجديد تمامًا. البلوك ده بيوضح تاريخ النشر
+           الأصلي وتاريخ آخر تحديث معًا، بدل الاعتماد على تاريخ واحد بس -->
+      <section v-if="updatedTodayPosts.length > 0" aria-labelledby="updated-today-heading">
+        <div class="flex items-center gap-3 mb-7">
+          <div class="w-1 h-8 rounded bg-emerald-500" aria-hidden="true" />
+          <h2 id="updated-today-heading" class="text-2xl md:text-3xl font-bold text-gray-900">
+            🔄 مقالات محدّثة اليوم
+          </h2>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <NuxtLink
+            v-for="post in updatedTodayPosts"
+            :key="post.id"
+            :to="`/news/${post.slug}`"
+            class="group bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-lg transition-all duration-300 hover:-translate-y-1 cursor-pointer"
+          >
+            <div class="relative h-40 overflow-hidden bg-gray-100">
+              <img
+                v-if="getImageUrl(post.featured_image)"
+                :src="getImageUrl(post.featured_image)!"
+                :alt="post.title_ar"
+                width="320"
+                height="160"
+                loading="lazy"
+                class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+              />
+              <div v-else class="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200" aria-hidden="true">
+                <svg class="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <!-- ✅ شارة "محدّث" واضحة تميّزه عن مقال جديد عادي -->
+              <div class="absolute top-3 right-3">
+                <span class="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full text-white bg-emerald-600 shadow-sm">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                  محدّث
+                </span>
+              </div>
+            </div>
+
+            <div class="p-4">
+              <h3 class="text-sm font-bold text-gray-900 mb-3 line-clamp-2 group-hover:text-emerald-600 transition-colors leading-relaxed">
+                {{ post.title_ar }}
+              </h3>
+
+              <!-- ✅ تاريخ النشر الأصلي + تاريخ آخر تحديث معًا، بوضوح -->
+              <div class="flex flex-col gap-1 text-xs text-gray-500 pt-3 border-t border-gray-100">
+                <span v-if="getPostDate(post)" class="flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                  </svg>
+                  نُشر: {{ getPostDate(post) }}
+                </span>
+                <span v-if="getUpdatedDate(post)" class="flex items-center gap-1.5 text-emerald-700 font-medium">
+                  <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                  حُدّث: {{ getUpdatedDate(post) }}
+                </span>
+              </div>
+            </div>
+          </NuxtLink>
         </div>
       </section>
 
